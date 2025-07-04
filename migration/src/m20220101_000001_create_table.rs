@@ -1,4 +1,8 @@
-use sea_orm_migration::{prelude::*, schema::*};
+use sea_orm_migration::{
+    prelude::*,
+    schema::*,
+    sea_orm::{entity, sqlx::types::uuid},
+};
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -42,23 +46,45 @@ impl MigrationTrait for Migration {
                     .primary_key(
                         Index::create()
                             .col(UserPermission::UserId)
-                            .col(UserPermission::PermissionId)
+                            .col(UserPermission::PermissionId),
                     )
                     .foreign_key(
                         ForeignKey::create()
                             .from(UserPermission::Table, UserPermission::UserId)
                             .to(User::Table, User::Id)
-                            .on_delete(ForeignKeyAction::Cascade)
+                            .on_delete(ForeignKeyAction::Cascade),
                     )
                     .foreign_key(
                         ForeignKey::create()
                             .from(UserPermission::Table, UserPermission::PermissionId)
                             .to(Permission::Table, Permission::Id)
-                            .on_delete(ForeignKeyAction::Cascade)
+                            .on_delete(ForeignKeyAction::Cascade),
                     )
                     .to_owned(),
             )
             .await?;
+
+        // Insert all permissions used in the routes
+        let permissions = vec![
+            "create permission",
+            "delete permission",
+            "create user",
+            "delete user",
+            "update user",
+            "get user",
+            "assign permission",
+            "create post",
+            "delete post",
+            "update post"
+        ];
+        for perm in permissions {
+            let insert = Query::insert()
+                .into_table(Permission::Table)
+                .columns([Permission::Id, Permission::PermissionName])
+                .values_panic([uuid::Uuid::new_v4().into(), perm.into()])
+                .to_owned();
+            manager.exec_stmt(insert).await?;
+        }
 
         Ok(())
     }
@@ -85,14 +111,13 @@ enum User {
     Table,
     Name,
     PasswordHash,
-    
 }
 
 #[derive(DeriveIden)]
 enum Permission {
     Id,
     Table,
-    PermissionName
+    PermissionName,
 }
 
 #[derive(DeriveIden)]
