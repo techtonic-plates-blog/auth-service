@@ -1,8 +1,9 @@
 use sea_orm_migration::{
     prelude::*,
     schema::*,
-    sea_orm::{entity, sqlx::types::uuid},
+    sea_orm::{entity},
 };
+use uuid::Uuid;
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -81,7 +82,7 @@ impl MigrationTrait for Migration {
             let insert = Query::insert()
                 .into_table(Permission::Table)
                 .columns([Permission::Id, Permission::PermissionName])
-                .values_panic([uuid::Uuid::new_v4().into(), perm.into()])
+                .values_panic([Uuid::new_v4().into(), perm.into()])
                 .to_owned();
             manager.exec_stmt(insert).await?;
         }
