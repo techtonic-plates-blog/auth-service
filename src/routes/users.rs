@@ -316,7 +316,7 @@ impl UsersApi {
         for perm_id in &req.0.permissions {
             let res = entities::user_permissions::Entity::delete_many()
                 .filter(entities::user_permissions::Column::UserId.eq(uuid.0))
-                .filter(entities::user_permissions::Column::permissionsId.eq(*perm_id))
+                .filter(entities::user_permissions::Column::PermissionId.eq(*perm_id))
                 .exec(*db)
                 .await
                 .map_err(poem::error::InternalServerError)?;
