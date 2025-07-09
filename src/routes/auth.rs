@@ -3,9 +3,9 @@ use crate::config::CONFIG;
 use crate::routes::ApiTags;
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use chrono::{Duration, Utc};
-use entities::permission::Entity as Permission;
-use entities::user::Entity as User;
-use entities::user_permission::Entity as UserPermission;
+use entities::permissions::Entity as Permissions;
+use entities::users::Entity as User;
+use entities::user_permissions::Entity as UserPermissions;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use poem::http::StatusCode;
 use poem::{Result, error::InternalServerError, web::Data};
@@ -68,25 +68,25 @@ impl AuthApi {
         //let salt = SaltString::generate(&mut OsRng);
         let argon2 = Argon2::default();
 
-        let user = User::find()
-            .filter(entities::user::Column::Name.eq(request.username.clone()))
+        let users = User::find()
+            .filter(entities::users::Column::Name.eq(request.username.clone()))
             .one(*db)
             .await
             .map_err(InternalServerError)?;
 
-        let Some(user) = user else {
+        let Some(users) = users else {
             return Ok(LoginResponse::Unauthorized);
         };
-        let password_hash = PasswordHash::new(&user.password_hash).map_err(|e| {
+        let password_hash = PasswordHash::new(&users.password_hash).map_err(|e| {
             poem::Error::from_string(e.to_string(), StatusCode::INTERNAL_SERVER_ERROR)
         })?;
         let verify_result = argon2.verify_password(request.password.as_bytes(), &password_hash);
         if verify_result.is_err() {
             return Ok(LoginResponse::Unauthorized);
         }
-        let permissions = UserPermission::find()
-            .filter(entities::user_permission::Column::UserId.eq(user.id.clone()))
-            .find_also_related(Permission)
+        let permissions = UserPermissions::find()
+            .filter(entities::user_permissions::Column::UserId.eq(users.id.clone()))
+            .find_also_related(Permissions)
             .all(*db)
             .await
             .map_err(InternalServerError)?;
@@ -100,14 +100,14 @@ impl AuthApi {
         let refresher_exp = Utc::now() + Duration::days(30);
 
         let jwt_claims = Claims {
-            sub: user.id.to_string(),
+            sub: users.id.to_string(),
             company: "techtonic-plate".to_string(),
             exp: jwt_exp.timestamp() as usize,
             permissions: permissions.clone(),
         };
 
         let refresher_claims = Claims {
-            sub: user.id.to_string(),
+            sub: users.id.to_string(),
             company: "techtonic-plate".to_string(),
             exp: refresher_exp.timestamp() as usize,
             permissions: permissions,
@@ -154,23 +154,23 @@ impl AuthApi {
             };
         let claims = token_data.claims;
 
-        // Parse user id as Uuid
+        // Parse users id as Uuid
         let user_id = match uuid::Uuid::parse_str(&claims.sub) {
             Ok(uuid) => uuid,
             Err(_) => return Ok(RefreshResponse::Unauthorized),
         };
-        let user = User::find_by_id(user_id)
+        let users = User::find_by_id(user_id)
             .one(*db)
             .await
             .map_err(InternalServerError)?;
-        let Some(user) = user else {
+        let Some(users) = users else {
             return Ok(RefreshResponse::Unauthorized);
         };
 
         // Get permissions
-        let permissions = UserPermission::find()
-            .filter(entities::user_permission::Column::UserId.eq(user.id.clone()))
-            .find_also_related(Permission)
+        let permissions = UserPermissions::find()
+            .filter(entities::user_permissions::Column::UserId.eq(users.id.clone()))
+            .find_also_related(Permissions)
             .all(*db)
             .await
             .map_err(InternalServerError)?;
@@ -184,13 +184,13 @@ impl AuthApi {
         let refresher_exp = Utc::now() + Duration::days(30);
 
         let jwt_claims = Claims {
-            sub: user.id.to_string(),
+            sub: users.id.to_string(),
             company: "techtonic-plate".to_string(),
             exp: jwt_exp.timestamp() as usize,
             permissions: permissions.clone(),
         };
         let refresher_claims = Claims {
-            sub: user.id.to_string(),
+            sub: users.id.to_string(),
             company: "techtonic-plate".to_string(),
             exp: refresher_exp.timestamp() as usize,
             permissions,

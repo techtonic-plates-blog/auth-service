@@ -34,7 +34,7 @@ enum RegisterResponse {
     #[oai(status = 201)]
     Created(PlainText<String>),
     #[oai(status = 400)]
-    PermissionDoesNotExists(PlainText<String>),
+    permissionsDoesNotExists(PlainText<String>),
     #[oai(status = 409)]
     UserAlreadyExists(PlainText<String>),
     #[oai(status = 401)]
@@ -44,7 +44,7 @@ enum RegisterResponse {
 #[derive(ApiResponse)]
 enum GetUserResponse {
     #[oai(status = 200)]
-    Ok(Json<entities::user::Model>),
+    Ok(Json<entities::users::Model>),
     #[oai(status = 404)]
     NotFound,
 }
@@ -56,12 +56,12 @@ enum GetUsersResponse {
 }
 
 #[derive(Object, Debug)]
-pub struct AddPermissionsRequest {
+pub struct AddpermissionssRequest {
     pub permissions: Vec<uuid::Uuid>,
 }
 
 #[derive(Object, Debug)]
-pub struct RemovePermissionsRequest {
+pub struct RemovepermissionssRequest {
     pub permissions: Vec<uuid::Uuid>,
 }
 
@@ -73,7 +73,7 @@ pub struct BatchUsersRequest {
 #[derive(ApiResponse)]
 enum BatchUsersResponse {
     #[oai(status = 200)]
-    Ok(Json<Vec<entities::user::Model>>),
+    Ok(Json<Vec<entities::users::Model>>),
 }
 
 #[OpenApi(prefix_path = "/users", tag = "ApiTags::Users")]
@@ -84,11 +84,11 @@ impl UsersApi {
         db: Data<&DatabaseConnection>,
         uuid: poem_openapi::param::Path<uuid::Uuid>,
     ) -> Result<GetUserResponse> {
-        let user = entities::user::Entity::find_by_id(uuid.0)
+        let users = entities::users::Entity::find_by_id(uuid.0)
             .one(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
-        match user {
+        match users {
             Some(model) => Ok(GetUserResponse::Ok(Json(model))),
             None => Ok(GetUserResponse::NotFound),
         }
@@ -101,13 +101,13 @@ impl UsersApi {
         db: Data<&DatabaseConnection>,
         request: Json<RegisterRequest>,
     ) -> Result<RegisterResponse> {
-        if !claims.permissions.contains(&"create user".to_string()) {
+        if !claims.permissions.contains(&"create users".to_string()) {
             return Ok(RegisterResponse::Unauthorized(PlainText(
                 "User does not have enough permissions".to_string(),
             )));
         }
-        let existing = entities::user::Entity::find()
-            .filter(entities::user::Column::Name.eq(request.username.clone()))
+        let existing = entities::users::Entity::find()
+            .filter(entities::users::Column::Name.eq(request.username.clone()))
             .one(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
@@ -116,23 +116,23 @@ impl UsersApi {
                 "User already exists".to_string(),
             )));
         }
-        let found_permissions: Vec<uuid::Uuid> = entities::permission::Entity::find()
-            .filter(entities::permission::Column::Id.is_in(request.permissions.clone()))
+        let found_permissionss: Vec<uuid::Uuid> = entities::permissions::Entity::find()
+            .filter(entities::permissions::Column::Id.is_in(request.permissions.clone()))
             .all(*db)
             .await
             .map_err(poem::error::InternalServerError)?
             .into_iter()
             .map(|perm| perm.id)
             .collect();
-        let missing_permissions: Vec<uuid::Uuid> = request
+        let missing_permissionss: Vec<uuid::Uuid> = request
             .permissions
             .iter()
-            .filter(|id| !found_permissions.contains(id))
+            .filter(|id| !found_permissionss.contains(id))
             .cloned()
             .collect();
-        if !missing_permissions.is_empty() {
-            return Ok(RegisterResponse::PermissionDoesNotExists(PlainText(
-                format!("Permissions do not exist: {:?}", missing_permissions),
+        if !missing_permissionss.is_empty() {
+            return Ok(RegisterResponse::permissionsDoesNotExists(PlainText(
+                format!("permissions do not exist: {:?}", missing_permissionss),
             )));
         }
         let salt = argon2::password_hash::SaltString::generate(
@@ -145,30 +145,30 @@ impl UsersApi {
                 poem::Error::from_string(e.to_string(), StatusCode::INTERNAL_SERVER_ERROR)
             })?
             .to_string();
-        let new_user = entities::user::ActiveModel {
+        let new_user = entities::users::ActiveModel {
             name: Set(request.username.clone()),
             password_hash: Set(password_hash),
             // Set other fields as needed
             ..Default::default()
         };
-        let user = entities::user::Entity::insert(new_user)
+        let users = entities::users::Entity::insert(new_user)
             .exec(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
         for perm_id in &request.permissions {
-            let user_perm = entities::user_permission::ActiveModel {
-                user_id: Set(user.last_insert_id),
+            let user_perm = entities::user_permissions::ActiveModel {
+                user_id: Set(users.last_insert_id),
                 permission_id: Set(*perm_id),
                 ..Default::default()
             };
-            entities::user_permission::Entity::insert(user_perm)
+            entities::user_permissions::Entity::insert(user_perm)
                 .exec(*db)
                 .await
                 .map_err(poem::error::InternalServerError)?;
         }
         Ok(RegisterResponse::Created(PlainText(format!(
             "/users/{}",
-            user.last_insert_id
+            users.last_insert_id
         ))))
     }
 
@@ -179,13 +179,13 @@ impl UsersApi {
         claims: BearerAuthorization,
         uuid: poem_openapi::param::Path<uuid::Uuid>,
     ) -> Result<PlainText<String>> {
-        if !claims.permissions.contains(&"delete user".to_string()) {
+        if !claims.permissions.contains(&"delete users".to_string()) {
             return Err(Error::from_string(
                 "Not enough permissions",
                 StatusCode::UNAUTHORIZED,
             ));
         }
-        let res = entities::user::Entity::delete_by_id(uuid.0)
+        let res = entities::users::Entity::delete_by_id(uuid.0)
             .exec(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
@@ -203,27 +203,27 @@ impl UsersApi {
         uuid: poem_openapi::param::Path<uuid::Uuid>,
         req: Json<UpdateUserRequest>,
     ) -> Result<PlainText<String>> {
-        if !claims.permissions.contains(&"update user".to_string()) {
+        if !claims.permissions.contains(&"update users".to_string()) {
             return Err(Error::from_string(
                 "Not enough permissions",
                 StatusCode::UNAUTHORIZED,
             ));
         }
-        let user = entities::user::Entity::find_by_id(uuid.0)
+        let users = entities::users::Entity::find_by_id(uuid.0)
             .one(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
-        let Some(mut user) = user else {
+        let Some(mut users) = users else {
             return Err(Error::from_string("User not found", StatusCode::NOT_FOUND));
         };
         if let Some(name) = &req.0.name {
-            user.name = name.clone();
+            users.name = name.clone();
         }
         if let Some(password_hash) = &req.0.password_hash {
-            user.password_hash = password_hash.clone();
+            users.password_hash = password_hash.clone();
         }
         // Update other fields as needed
-        let active: entities::user::ActiveModel = user.into();
+        let active: entities::users::ActiveModel = users.into();
         let updated = active
             .update(*db)
             .await
@@ -232,99 +232,99 @@ impl UsersApi {
     }
 
     #[oai(path = "/:uuid/permissions", method = "post")]
-    async fn add_permissions_to_user(
+    async fn add_permissionss_to_user(
         &self,
         db: Data<&DatabaseConnection>,
         claims: BearerAuthorization,
         uuid: poem_openapi::param::Path<uuid::Uuid>,
-        req: Json<AddPermissionsRequest>,
+        req: Json<AddpermissionssRequest>,
     ) -> Result<PlainText<String>> {
         if !claims
             .permissions
-            .contains(&"assign permission".to_string())
+            .contains(&"assign permissions".to_string())
         {
             return Err(Error::from_string(
                 "Not enough permissions",
                 StatusCode::UNAUTHORIZED,
             ));
         }
-        // Check if user exists
-        let user = entities::user::Entity::find_by_id(uuid.0)
+        // Check if users exists
+        let users = entities::users::Entity::find_by_id(uuid.0)
             .one(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
-        if user.is_none() {
+        if users.is_none() {
             return Err(Error::from_string("User not found", StatusCode::NOT_FOUND));
         }
         // Check if all permissions exist
-        let found_permissions: Vec<uuid::Uuid> = entities::permission::Entity::find()
-            .filter(entities::permission::Column::Id.is_in(req.0.permissions.clone()))
+        let found_permissionss: Vec<uuid::Uuid> = entities::permissions::Entity::find()
+            .filter(entities::permissions::Column::Id.is_in(req.0.permissions.clone()))
             .all(*db)
             .await
             .map_err(poem::error::InternalServerError)?
             .into_iter()
             .map(|perm| perm.id)
             .collect();
-        let missing_permissions: Vec<uuid::Uuid> = req
+        let missing_permissionss: Vec<uuid::Uuid> = req
             .0
             .permissions
             .iter()
-            .filter(|id| !found_permissions.contains(id))
+            .filter(|id| !found_permissionss.contains(id))
             .cloned()
             .collect();
-        if !missing_permissions.is_empty() {
+        if !missing_permissionss.is_empty() {
             return Err(Error::from_string(
-                format!("Permissions do not exist: {:?}", missing_permissions),
+                format!("permissions do not exist: {:?}", missing_permissionss),
                 StatusCode::BAD_REQUEST,
             ));
         }
         // Assign permissions
         for perm_id in &req.0.permissions {
-            let user_perm = entities::user_permission::ActiveModel {
+            let user_perm = entities::user_permissions::ActiveModel {
                 user_id: Set(uuid.0),
                 permission_id: Set(*perm_id),
                 ..Default::default()
             };
-            entities::user_permission::Entity::insert(user_perm)
+            entities::user_permissions::Entity::insert(user_perm)
                 .exec(*db)
                 .await
                 .map_err(poem::error::InternalServerError)?;
         }
-        Ok(PlainText("Permissions assigned".to_string()))
+        Ok(PlainText("permissions assigned".to_string()))
     }
 
     #[oai(path = "/:uuid/permissions", method = "delete")]
-    async fn remove_permissions_from_user(
+    async fn remove_permissionss_from_user(
         &self,
         db: Data<&DatabaseConnection>,
         claims: BearerAuthorization,
         uuid: poem_openapi::param::Path<uuid::Uuid>,
-        req: Json<RemovePermissionsRequest>,
+        req: Json<RemovepermissionssRequest>,
     ) -> Result<PlainText<String>> {
-        if !claims.permissions.contains(&"assign permission".to_string()) {
+        if !claims.permissions.contains(&"assign permissions".to_string()) {
             return Err(Error::from_string("Not enough permissions", StatusCode::UNAUTHORIZED));
         }
-        // Check if user exists
-        let user = entities::user::Entity::find_by_id(uuid.0)
+        // Check if users exists
+        let users = entities::users::Entity::find_by_id(uuid.0)
             .one(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
-        if user.is_none() {
+        if users.is_none() {
             return Err(Error::from_string("User not found", StatusCode::NOT_FOUND));
         }
         // Remove permissions
         for perm_id in &req.0.permissions {
-            let res = entities::user_permission::Entity::delete_many()
-                .filter(entities::user_permission::Column::UserId.eq(uuid.0))
-                .filter(entities::user_permission::Column::PermissionId.eq(*perm_id))
+            let res = entities::user_permissions::Entity::delete_many()
+                .filter(entities::user_permissions::Column::UserId.eq(uuid.0))
+                .filter(entities::user_permissions::Column::permissionsId.eq(*perm_id))
                 .exec(*db)
                 .await
                 .map_err(poem::error::InternalServerError)?;
             if res.rows_affected == 0 {
-                // Optionally, you can return an error if a permission was not found for this user
+                // Optionally, you can return an error if a permissions was not found for this users
             }
         }
-        Ok(PlainText("Permissions removed".to_string()))
+        Ok(PlainText("permissions removed".to_string()))
     }
 
     #[oai(path = "/", method = "get")]
@@ -333,13 +333,13 @@ impl UsersApi {
         claims: BearerAuthorization,
         db: Data<&DatabaseConnection>,
     ) -> Result<GetUsersResponse> {
-        if !claims.permissions.contains(&"get user".to_string()) {
+        if !claims.permissions.contains(&"get users".to_string()) {
             return Err(Error::from_string(
                 "Not enough permissions",
                 StatusCode::UNAUTHORIZED,
             ));
         }
-        let users = entities::user::Entity::find()
+        let users = entities::users::Entity::find()
             .all(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
@@ -354,14 +354,14 @@ impl UsersApi {
         db: Data<&DatabaseConnection>,
         req: Json<BatchUsersRequest>,
     ) -> Result<BatchUsersResponse> {
-        if !claims.permissions.contains(&"get user".to_string()) {
+        if !claims.permissions.contains(&"get users".to_string()) {
             return Err(Error::from_string(
                 "Not enough permissions",
                 StatusCode::UNAUTHORIZED,
             ));
         }
-        let users = entities::user::Entity::find()
-            .filter(entities::user::Column::Id.is_in(req.0.uuids.clone()))
+        let users = entities::users::Entity::find()
+            .filter(entities::users::Column::Id.is_in(req.0.uuids.clone()))
             .all(*db)
             .await
             .map_err(poem::error::InternalServerError)?;

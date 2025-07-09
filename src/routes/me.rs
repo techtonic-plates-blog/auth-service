@@ -61,7 +61,7 @@ impl MeApi {
             Ok(id) => id,
             Err(_) => return Ok(MeGetResponse::Unauthorized),
         };
-        let user = entities::user::Entity::find_by_id(user_id)
+        let user = entities::users::Entity::find_by_id(user_id)
             .one(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
@@ -69,9 +69,9 @@ impl MeApi {
             return Ok(MeGetResponse::NotFound);
         };
         // Fetch permissions for the user
-        let user_permissions = entities::user_permission::Entity::find()
-            .filter(entities::user_permission::Column::UserId.eq(user.id))
-            .find_also_related(entities::permission::Entity)
+        let user_permissions = entities::user_permissions::Entity::find()
+            .filter(entities::user_permissions::Column::UserId.eq(user.id))
+            .find_also_related(entities::permissions::Entity)
             .all(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
@@ -99,7 +99,7 @@ impl MeApi {
             Ok(id) => id,
             Err(_) => return Ok(MeUpdateResponse::Unauthorized(PlainText("Invalid user id".to_string()))),
         };
-        let user = entities::user::Entity::find_by_id(user_id)
+        let user = entities::users::Entity::find_by_id(user_id)
             .one(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
@@ -121,7 +121,7 @@ impl MeApi {
             .hash_password(req.new_password.as_bytes(), &salt)
             .map_err(|e| poem::Error::from_string(e.to_string(), StatusCode::INTERNAL_SERVER_ERROR))?
             .to_string();
-        let mut active: entities::user::ActiveModel = user.into();
+        let mut active: entities::users::ActiveModel = user.into();
         active.password_hash = Set(new_hash);
         active.update(*db)
             .await
@@ -141,7 +141,7 @@ impl MeApi {
             Ok(id) => id,
             Err(_) => return Ok(MeUpdateResponse::Unauthorized(PlainText("Invalid user id".to_string()))),
         };
-        let user = entities::user::Entity::find_by_id(user_id)
+        let user = entities::users::Entity::find_by_id(user_id)
             .one(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
@@ -149,15 +149,15 @@ impl MeApi {
             return Ok(MeUpdateResponse::NotFound(PlainText("User not found".to_string())));
         };
         // Check if new username already exists
-        let exists = entities::user::Entity::find()
-            .filter(entities::user::Column::Name.eq(req.new_username.clone()))
+        let exists = entities::users::Entity::find()
+            .filter(entities::users::Column::Name.eq(req.new_username.clone()))
             .one(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
         if exists.is_some() {
             return Ok(MeUpdateResponse::BadRequest(PlainText("Username already taken".to_string())));
         }
-        let mut active: entities::user::ActiveModel = user.into();
+        let mut active: entities::users::ActiveModel = user.into();
         active.name = Set(req.new_username.clone());
         active.update(*db)
             .await

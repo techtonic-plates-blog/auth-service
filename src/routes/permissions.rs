@@ -1,7 +1,7 @@
 use poem::{http::StatusCode, web::Data, Error};
 use poem_openapi::{payload::Json, ApiResponse, OpenApi};
 use sea_orm::{DatabaseConnection, QueryFilter, ColumnTrait};
-use entities::permission::Entity as Permission;
+use entities::permissions::Entity as Permissions;
 use crate::auth::BearerAuthorization;
 
 use super::ApiTags;
@@ -15,7 +15,7 @@ pub struct PermissionsApi;
 #[derive(ApiResponse)]
 enum GetPermissionResponse {
     #[oai(status = 200)]
-    Ok(Json<entities::permission::Model>),
+    Ok(Json<entities::permissions::Model>),
     #[oai(status = 404)]
     NotFound
 }
@@ -34,7 +34,7 @@ pub struct BatchPermissionsRequest {
 #[derive(ApiResponse)]
 enum BatchPermissionsResponse {
     #[oai(status = 200)]
-    Ok(Json<Vec<entities::permission::Model>>),
+    Ok(Json<Vec<entities::permissions::Model>>),
 }
 
 #[OpenApi(prefix_path = "/permissions", tag = "ApiTags::Permissions")]
@@ -42,9 +42,9 @@ impl PermissionsApi {
 
     #[oai(path = "/", method = "get")]
     async fn get_permissions(&self, db: Data<&DatabaseConnection>) -> Result<Json<Vec<uuid::Uuid>>> {
-        let uuids: Vec<uuid::Uuid> = Permission::find()
+        let uuids: Vec<uuid::Uuid> = Permissions::find()
             .select_only()
-            .column(entities::permission::Column::Id)
+            .column(entities::permissions::Column::Id)
             .into_tuple()
             .all(*db)
             .await
@@ -54,11 +54,11 @@ impl PermissionsApi {
 
     #[oai(path = "/:uuid", method = "get")]
     async fn get_permission(&self, db: Data<&DatabaseConnection>, uuid: poem_openapi::param::Path<uuid::Uuid>) -> Result<GetPermissionResponse> {
-        let permission = Permission::find_by_id(uuid.0)
+        let permissions = Permissions::find_by_id(uuid.0)
             .one(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
-        match permission {
+        match permissions {
             Some(model) => Ok(GetPermissionResponse::Ok(Json(model))),
             None => Ok(GetPermissionResponse::NotFound),
         }
@@ -71,11 +71,11 @@ impl PermissionsApi {
         claims: BearerAuthorization,
         req: Json<AddPermissionRequest>,
     ) -> Result<poem_openapi::payload::PlainText<String>> {
-        if !claims.permissions.contains(&"create permission".to_string()) {
+        if !claims.permissions.contains(&"create permissions".to_string()) {
             return Err(Error::from_string("Not enough permissions", StatusCode::UNAUTHORIZED))
         }
 
-        let active = entities::permission::ActiveModel {
+        let active = entities::permissions::ActiveModel {
             id: Set(uuid::Uuid::new_v4()),
             permission_name: Set(req.0.permission_name.clone()),
             // Set other fields as needed
@@ -92,15 +92,15 @@ impl PermissionsApi {
         claims: BearerAuthorization,
         uuid: poem_openapi::param::Path<uuid::Uuid>,
     ) -> Result<poem_openapi::payload::PlainText<String>> {
-        if !claims.permissions.contains(&"delete permission".to_string()) {
+        if !claims.permissions.contains(&"delete permissions".to_string()) {
             return Err(Error::from_string("Not enough permissions", StatusCode::UNAUTHORIZED))
         }
-        let res = entities::permission::Entity::delete_by_id(uuid.0)
+        let res = entities::permissions::Entity::delete_by_id(uuid.0)
             .exec(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
         if res.rows_affected == 0 {
-            return Err(Error::from_string("Permission not found", StatusCode::NOT_FOUND));
+            return Err(Error::from_string("Permissions not found", StatusCode::NOT_FOUND));
         }
         Ok(poem_openapi::payload::PlainText(uuid.0.to_string()))
     }
@@ -111,8 +111,8 @@ impl PermissionsApi {
         db: Data<&DatabaseConnection>,
         req: Json<BatchPermissionsRequest>,
     ) -> Result<BatchPermissionsResponse> {
-        let permissions = Permission::find()
-            .filter(entities::permission::Column::Id.is_in(req.0.uuids.clone()))
+        let permissions = Permissions::find()
+            .filter(entities::permissions::Column::Id.is_in(req.0.uuids.clone()))
             .all(*db)
             .await
             .map_err(poem::error::InternalServerError)?;

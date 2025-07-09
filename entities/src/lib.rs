@@ -2,6 +2,6 @@
 
 pub mod prelude;
 
-pub mod permission;
-pub mod user;
-pub mod user_permission;
+pub mod permissions;
+pub mod user_permissions;
+pub mod users;
