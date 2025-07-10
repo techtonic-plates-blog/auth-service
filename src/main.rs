@@ -16,7 +16,7 @@ async fn main() -> Result<(), std::io::Error> {
     let SetupResult { db } = setup::setup_all().await.expect("setup failed");
 
     let api_service =
-        OpenApiService::new(api(), "Auth service", "1.0").server("http://localhost:50000");
+        OpenApiService::new(api(), "Auth service", "1.0").server("http://localhost:5000");
 
     let spec_endpoint = api_service.spec_endpoint();
     let spec_yaml_endpoint = api_service.spec_endpoint_yaml();
