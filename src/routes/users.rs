@@ -84,6 +84,12 @@ impl UsersApi {
         db: Data<&DatabaseConnection>,
         uuid: poem_openapi::param::Path<uuid::Uuid>,
     ) -> Result<GetUserResponse> {
+           if !claims.permissions.contains(&"get user".to_string()) {
+            return Err(Error::from_string(
+                "Not enough permissions",
+                StatusCode::UNAUTHORIZED,
+            ));
+        }
         let users = entities::users::Entity::find_by_id(uuid.0)
             .one(*db)
             .await
@@ -101,7 +107,7 @@ impl UsersApi {
         db: Data<&DatabaseConnection>,
         request: Json<RegisterRequest>,
     ) -> Result<RegisterResponse> {
-        if !claims.permissions.contains(&"create users".to_string()) {
+        if !claims.permissions.contains(&"create user".to_string()) {
             return Ok(RegisterResponse::Unauthorized(PlainText(
                 "User does not have enough permissions".to_string(),
             )));
@@ -179,7 +185,7 @@ impl UsersApi {
         claims: BearerAuthorization,
         uuid: poem_openapi::param::Path<uuid::Uuid>,
     ) -> Result<PlainText<String>> {
-        if !claims.permissions.contains(&"delete users".to_string()) {
+        if !claims.permissions.contains(&"delete user".to_string()) {
             return Err(Error::from_string(
                 "Not enough permissions",
                 StatusCode::UNAUTHORIZED,
@@ -203,7 +209,7 @@ impl UsersApi {
         uuid: poem_openapi::param::Path<uuid::Uuid>,
         req: Json<UpdateUserRequest>,
     ) -> Result<PlainText<String>> {
-        if !claims.permissions.contains(&"update users".to_string()) {
+        if !claims.permissions.contains(&"update user".to_string()) {
             return Err(Error::from_string(
                 "Not enough permissions",
                 StatusCode::UNAUTHORIZED,
@@ -241,7 +247,7 @@ impl UsersApi {
     ) -> Result<PlainText<String>> {
         if !claims
             .permissions
-            .contains(&"assign permissions".to_string())
+            .contains(&"assign permission".to_string())
         {
             return Err(Error::from_string(
                 "Not enough permissions",
@@ -301,7 +307,7 @@ impl UsersApi {
         uuid: poem_openapi::param::Path<uuid::Uuid>,
         req: Json<RemovepermissionssRequest>,
     ) -> Result<PlainText<String>> {
-        if !claims.permissions.contains(&"assign permissions".to_string()) {
+        if !claims.permissions.contains(&"assign permission".to_string()) {
             return Err(Error::from_string("Not enough permissions", StatusCode::UNAUTHORIZED));
         }
         // Check if users exists
@@ -333,7 +339,7 @@ impl UsersApi {
         claims: BearerAuthorization,
         db: Data<&DatabaseConnection>,
     ) -> Result<GetUsersResponse> {
-        if !claims.permissions.contains(&"get users".to_string()) {
+        if !claims.permissions.contains(&"get user".to_string()) {
             return Err(Error::from_string(
                 "Not enough permissions",
                 StatusCode::UNAUTHORIZED,
@@ -354,7 +360,7 @@ impl UsersApi {
         db: Data<&DatabaseConnection>,
         req: Json<BatchUsersRequest>,
     ) -> Result<BatchUsersResponse> {
-        if !claims.permissions.contains(&"get users".to_string()) {
+        if !claims.permissions.contains(&"get user".to_string()) {
             return Err(Error::from_string(
                 "Not enough permissions",
                 StatusCode::UNAUTHORIZED,
