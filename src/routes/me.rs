@@ -9,7 +9,7 @@ use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, Qu
 pub struct MeApi;
 
 #[derive(Object, Debug)]
-pub struct UpdatePasswordRequest {
+pub struct UpdateMyPasswordRequest {
     pub old_password: String,
     pub new_password: String,
 }
@@ -93,7 +93,7 @@ impl MeApi {
         &self,
         db: Data<&DatabaseConnection>,
         claims: BearerAuthorization,
-        req: Json<UpdatePasswordRequest>,
+        req: Json<UpdateMyPasswordRequest>,
     ) -> Result<MeUpdateResponse> {
         let user_id = match uuid::Uuid::parse_str(&claims.sub) {
             Ok(id) => id,
