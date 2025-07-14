@@ -8,18 +8,22 @@ use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, Qu
 
 pub struct UsersApi;
 
+
 #[derive(Object, Debug)]
-pub struct UserRequest {
+pub struct UserWithPermissions {
+    pub id: uuid::Uuid,
     pub name: String,
-    pub password_hash: String,
-    // Add other fields as needed
+    pub permissions: Vec<entities::permissions::Model>,
 }
 
 #[derive(Object, Debug)]
 pub struct UpdateUserRequest {
     pub name: Option<String>,
-    pub password_hash: Option<String>,
-    // Add other fields as needed
+}
+
+#[derive(Object, Debug)]
+pub struct UpdatePasswordRequest {
+    pub new_password: String,
 }
 
 #[derive(Object, Debug)]
@@ -34,7 +38,7 @@ enum RegisterResponse {
     #[oai(status = 201)]
     Created(PlainText<String>),
     #[oai(status = 400)]
-    permissionsDoesNotExists(PlainText<String>),
+    PermissionsDoesNotExists(PlainText<String>),
     #[oai(status = 409)]
     UserAlreadyExists(PlainText<String>),
     #[oai(status = 401)]
@@ -44,7 +48,7 @@ enum RegisterResponse {
 #[derive(ApiResponse)]
 enum GetUserResponse {
     #[oai(status = 200)]
-    Ok(Json<entities::users::Model>),
+    Ok(Json<UserWithPermissions>),
     #[oai(status = 404)]
     NotFound,
 }
@@ -73,7 +77,17 @@ pub struct BatchUsersRequest {
 #[derive(ApiResponse)]
 enum BatchUsersResponse {
     #[oai(status = 200)]
-    Ok(Json<Vec<entities::users::Model>>),
+    Ok(Json<Vec<UserWithPermissions>>),
+}
+
+#[derive(ApiResponse)]
+enum UpdatePasswordResponse {
+    #[oai(status = 200)]
+    Ok(PlainText<String>),
+    #[oai(status = 404)]
+    NotFound(PlainText<String>),
+    #[oai(status = 401)]
+    Unauthorized(PlainText<String>),
 }
 
 #[OpenApi(prefix_path = "/users", tag = "ApiTags::Users")]
@@ -81,21 +95,43 @@ impl UsersApi {
     #[oai(path = "/:uuid", method = "get")]
     async fn get_user(
         &self,
+        claims: BearerAuthorization,
         db: Data<&DatabaseConnection>,
         uuid: poem_openapi::param::Path<uuid::Uuid>,
     ) -> Result<GetUserResponse> {
-           if !claims.permissions.contains(&"get user".to_string()) {
+        if !claims.permissions.contains(&"get user".to_string()) {
             return Err(Error::from_string(
                 "Not enough permissions",
                 StatusCode::UNAUTHORIZED,
             ));
         }
-        let users = entities::users::Entity::find_by_id(uuid.0)
+        let user = entities::users::Entity::find_by_id(uuid.0)
             .one(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
-        match users {
-            Some(model) => Ok(GetUserResponse::Ok(Json(model))),
+        
+        match user {
+            Some(user_model) => {
+                let permissions = entities::users::Entity::find_by_id(uuid.0)
+                    .find_with_related(entities::permissions::Entity)
+                    .all(*db)
+                    .await
+                    .map_err(poem::error::InternalServerError)?;
+                
+                let user_permissions = permissions
+                    .into_iter()
+                    .next()
+                    .map(|(_, perms)| perms)
+                    .unwrap_or_default();
+                
+                let user_with_permissions = UserWithPermissions {
+                    id: user_model.id,
+                    name: user_model.name,
+                    permissions: user_permissions,
+                };
+                
+                Ok(GetUserResponse::Ok(Json(user_with_permissions)))
+            }
             None => Ok(GetUserResponse::NotFound),
         }
     }
@@ -137,7 +173,7 @@ impl UsersApi {
             .cloned()
             .collect();
         if !missing_permissionss.is_empty() {
-            return Ok(RegisterResponse::permissionsDoesNotExists(PlainText(
+            return Ok(RegisterResponse::PermissionsDoesNotExists(PlainText(
                 format!("permissions do not exist: {:?}", missing_permissionss),
             )));
         }
@@ -154,7 +190,6 @@ impl UsersApi {
         let new_user = entities::users::ActiveModel {
             name: Set(request.username.clone()),
             password_hash: Set(password_hash),
-            // Set other fields as needed
             ..Default::default()
         };
         let users = entities::users::Entity::insert(new_user)
@@ -225,16 +260,53 @@ impl UsersApi {
         if let Some(name) = &req.0.name {
             users.name = name.clone();
         }
-        if let Some(password_hash) = &req.0.password_hash {
-            users.password_hash = password_hash.clone();
-        }
-        // Update other fields as needed
         let active: entities::users::ActiveModel = users.into();
         let updated = active
             .update(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
         Ok(PlainText(updated.id.to_string()))
+    }
+
+    #[oai(path = "/:uuid/password", method = "patch")]
+    async fn update_password(
+        &self,
+        db: Data<&DatabaseConnection>,
+        claims: BearerAuthorization,
+        uuid: poem_openapi::param::Path<uuid::Uuid>,
+        req: Json<UpdatePasswordRequest>,
+    ) -> Result<UpdatePasswordResponse> {
+        if !claims.permissions.contains(&"update user".to_string()) {
+            return Ok(UpdatePasswordResponse::Unauthorized(PlainText(
+                "Not enough permissions".to_string(),
+            )));
+        }
+        let users = entities::users::Entity::find_by_id(uuid.0)
+            .one(*db)
+            .await
+            .map_err(poem::error::InternalServerError)?;
+        let Some(mut users) = users else {
+            return Ok(UpdatePasswordResponse::NotFound(PlainText(
+                "User not found".to_string(),
+            )));
+        };
+        let salt = argon2::password_hash::SaltString::generate(
+            &mut argon2::password_hash::rand_core::OsRng,
+        );
+        let argon2 = argon2::Argon2::default();
+        let password_hash = argon2
+            .hash_password(req.0.new_password.as_bytes(), &salt)
+            .map_err(|e| {
+                poem::Error::from_string(e.to_string(), StatusCode::INTERNAL_SERVER_ERROR)
+            })?
+            .to_string();
+        users.password_hash = password_hash;
+        let active: entities::users::ActiveModel = users.into();
+        active
+            .update(*db)
+            .await
+            .map_err(poem::error::InternalServerError)?;
+        Ok(UpdatePasswordResponse::Ok(PlainText("Password updated successfully".to_string())))
     }
 
     #[oai(path = "/:uuid/permissions", method = "post")]
@@ -366,11 +438,22 @@ impl UsersApi {
                 StatusCode::UNAUTHORIZED,
             ));
         }
-        let users = entities::users::Entity::find()
+        let users_with_permissions = entities::users::Entity::find()
             .filter(entities::users::Column::Id.is_in(req.0.uuids.clone()))
+            .find_with_related(entities::permissions::Entity)
             .all(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
-        Ok(BatchUsersResponse::Ok(Json(users)))
+        
+        let result: Vec<UserWithPermissions> = users_with_permissions
+            .into_iter()
+            .map(|(user, permissions)| UserWithPermissions {
+                id: user.id,
+                name: user.name,
+                permissions,
+            })
+            .collect();
+        
+        Ok(BatchUsersResponse::Ok(Json(result)))
     }
 }
