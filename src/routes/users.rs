@@ -190,7 +190,7 @@ impl UsersApi {
         let new_user = entities::users::ActiveModel {
             name: Set(request.username.clone()),
             password_hash: Set(password_hash),
-            ..Default::default()
+            id: Set(uuid::Uuid::new_v4()),
         };
         let users = entities::users::Entity::insert(new_user)
             .exec(*db)
@@ -200,7 +200,7 @@ impl UsersApi {
             let user_perm = entities::user_permissions::ActiveModel {
                 user_id: Set(users.last_insert_id),
                 permission_id: Set(*perm_id),
-                ..Default::default()
+                
             };
             entities::user_permissions::Entity::insert(user_perm)
                 .exec(*db)
