@@ -13,7 +13,7 @@ pub struct UsersApi;
 pub struct UserWithPermissions {
     pub id: uuid::Uuid,
     pub name: String,
-    pub permissions: Vec<entities::permissions::Model>,
+    pub permissions: Vec<uuid::Uuid>,
 }
 
 #[derive(Object, Debug)]
@@ -127,7 +127,7 @@ impl UsersApi {
                 let user_with_permissions = UserWithPermissions {
                     id: user_model.id,
                     name: user_model.name,
-                    permissions: user_permissions,
+                    permissions: user_permissions.into_iter().map(|p| p.id).collect(),
                 };
                 
                 Ok(GetUserResponse::Ok(Json(user_with_permissions)))
@@ -450,7 +450,7 @@ impl UsersApi {
             .map(|(user, permissions)| UserWithPermissions {
                 id: user.id,
                 name: user.name,
-                permissions,
+                permissions: permissions.into_iter().map(|p| p.id).collect(),
             })
             .collect();
         
