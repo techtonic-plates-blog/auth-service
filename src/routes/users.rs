@@ -8,7 +8,6 @@ use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, Qu
 
 pub struct UsersApi;
 
-
 #[derive(Object, Debug)]
 pub struct UserWithPermissions {
     pub id: uuid::Uuid,
@@ -56,7 +55,7 @@ enum GetUserResponse {
 #[derive(ApiResponse)]
 enum GetUsersResponse {
     #[oai(status = 200)]
-    Ok(Json<Vec<uuid::Uuid>>),
+    Ok(Json<Vec<String>>),
 }
 
 #[derive(Object, Debug)]
@@ -71,7 +70,7 @@ pub struct RemovepermissionssRequest {
 
 #[derive(Object, Debug)]
 pub struct BatchUsersRequest {
-    pub uuids: Vec<uuid::Uuid>,
+    pub usernames: Vec<String>,
 }
 
 #[derive(ApiResponse)]
@@ -92,12 +91,12 @@ enum UpdatePasswordResponse {
 
 #[OpenApi(prefix_path = "/users", tag = "ApiTags::Users")]
 impl UsersApi {
-    #[oai(path = "/:uuid", method = "get")]
+    #[oai(path = "/:username", method = "get")]
     async fn get_user(
         &self,
         claims: BearerAuthorization,
         db: Data<&DatabaseConnection>,
-        uuid: poem_openapi::param::Path<uuid::Uuid>,
+        username: poem_openapi::param::Path<String>,
     ) -> Result<GetUserResponse> {
         if !claims.permissions.contains(&"get user".to_string()) {
             return Err(Error::from_string(
@@ -105,31 +104,24 @@ impl UsersApi {
                 StatusCode::UNAUTHORIZED,
             ));
         }
-        let user = entities::users::Entity::find_by_id(uuid.0)
-            .one(*db)
+        let user = entities::users::Entity::find()
+            .filter(entities::users::Column::Name.eq(username.0))
+            .find_with_related(entities::permissions::Entity)
+            .all(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
-        
+        let user = user.into_iter().next();
+
         match user {
-            Some(user_model) => {
-                let permissions = entities::users::Entity::find_by_id(uuid.0)
-                    .find_with_related(entities::permissions::Entity)
-                    .all(*db)
-                    .await
-                    .map_err(poem::error::InternalServerError)?;
-                
-                let user_permissions = permissions
-                    .into_iter()
-                    .next()
-                    .map(|(_, perms)| perms)
-                    .unwrap_or_default();
-                
+            Some(user) => {
+                let (user, permissions) = user;
+            
                 let user_with_permissions = UserWithPermissions {
-                    id: user_model.id,
-                    name: user_model.name,
-                    permissions: user_permissions.into_iter().map(|p| p.id).collect(),
+                    id: user.id.clone(),
+                    name: user.name.clone(),
+                    permissions: permissions.clone().into_iter().map(|p| p.id).collect(),
                 };
-                
+
                 Ok(GetUserResponse::Ok(Json(user_with_permissions)))
             }
             None => Ok(GetUserResponse::NotFound),
@@ -200,7 +192,6 @@ impl UsersApi {
             let user_perm = entities::user_permissions::ActiveModel {
                 user_id: Set(users.last_insert_id),
                 permission_id: Set(*perm_id),
-                
             };
             entities::user_permissions::Entity::insert(user_perm)
                 .exec(*db)
@@ -213,12 +204,12 @@ impl UsersApi {
         ))))
     }
 
-    #[oai(path = "/:uuid", method = "delete")]
+    #[oai(path = "/:username", method = "delete")]
     async fn delete_user(
         &self,
         db: Data<&DatabaseConnection>,
         claims: BearerAuthorization,
-        uuid: poem_openapi::param::Path<uuid::Uuid>,
+        username: poem_openapi::param::Path<String>,
     ) -> Result<PlainText<String>> {
         if !claims.permissions.contains(&"delete user".to_string()) {
             return Err(Error::from_string(
@@ -226,22 +217,23 @@ impl UsersApi {
                 StatusCode::UNAUTHORIZED,
             ));
         }
-        let res = entities::users::Entity::delete_by_id(uuid.0)
+        let res = entities::users::Entity::delete_many()
+            .filter(entities::users::Column::Name.eq(&username.0))
             .exec(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
         if res.rows_affected == 0 {
             return Err(Error::from_string("User not found", StatusCode::NOT_FOUND));
         }
-        Ok(PlainText(uuid.0.to_string()))
+        Ok(PlainText(username.0.to_string()))
     }
 
-    #[oai(path = "/:uuid", method = "patch")]
+    #[oai(path = "/:username", method = "patch")]
     async fn update_user(
         &self,
         db: Data<&DatabaseConnection>,
         claims: BearerAuthorization,
-        uuid: poem_openapi::param::Path<uuid::Uuid>,
+        username: poem_openapi::param::Path<String>,
         req: Json<UpdateUserRequest>,
     ) -> Result<PlainText<String>> {
         if !claims.permissions.contains(&"update user".to_string()) {
@@ -250,7 +242,8 @@ impl UsersApi {
                 StatusCode::UNAUTHORIZED,
             ));
         }
-        let users = entities::users::Entity::find_by_id(uuid.0)
+        let users = entities::users::Entity::find()
+            .filter(entities::users::Column::Name.eq(&username.0))
             .one(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
@@ -268,12 +261,12 @@ impl UsersApi {
         Ok(PlainText(updated.id.to_string()))
     }
 
-    #[oai(path = "/:uuid/password", method = "patch")]
+    #[oai(path = "/:username/password", method = "patch")]
     async fn update_password(
         &self,
         db: Data<&DatabaseConnection>,
         claims: BearerAuthorization,
-        uuid: poem_openapi::param::Path<uuid::Uuid>,
+        username: poem_openapi::param::Path<String>,
         req: Json<UpdatePasswordRequest>,
     ) -> Result<UpdatePasswordResponse> {
         if !claims.permissions.contains(&"update user".to_string()) {
@@ -281,7 +274,8 @@ impl UsersApi {
                 "Not enough permissions".to_string(),
             )));
         }
-        let users = entities::users::Entity::find_by_id(uuid.0)
+        let users = entities::users::Entity::find()
+            .filter(entities::users::Column::Name.eq(&username.0))
             .one(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
@@ -306,15 +300,17 @@ impl UsersApi {
             .update(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
-        Ok(UpdatePasswordResponse::Ok(PlainText("Password updated successfully".to_string())))
+        Ok(UpdatePasswordResponse::Ok(PlainText(
+            "Password updated successfully".to_string(),
+        )))
     }
 
-    #[oai(path = "/:uuid/permissions", method = "post")]
+    #[oai(path = "/:username/permissions", method = "post")]
     async fn add_permissionss_to_user(
         &self,
         db: Data<&DatabaseConnection>,
         claims: BearerAuthorization,
-        uuid: poem_openapi::param::Path<uuid::Uuid>,
+        username: poem_openapi::param::Path<String>,
         req: Json<AddpermissionssRequest>,
     ) -> Result<PlainText<String>> {
         if !claims
@@ -327,13 +323,14 @@ impl UsersApi {
             ));
         }
         // Check if users exists
-        let users = entities::users::Entity::find_by_id(uuid.0)
+        let user = entities::users::Entity::find()
+            .filter(entities::users::Column::Name.eq(&username.0))
             .one(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
-        if users.is_none() {
+        let Some(user) = user else {
             return Err(Error::from_string("User not found", StatusCode::NOT_FOUND));
-        }
+        };
         // Check if all permissions exist
         let found_permissionss: Vec<uuid::Uuid> = entities::permissions::Entity::find()
             .filter(entities::permissions::Column::Id.is_in(req.0.permissions.clone()))
@@ -343,23 +340,23 @@ impl UsersApi {
             .into_iter()
             .map(|perm| perm.id)
             .collect();
-        let missing_permissionss: Vec<uuid::Uuid> = req
+        let missing_permissions: Vec<uuid::Uuid> = req
             .0
             .permissions
             .iter()
             .filter(|id| !found_permissionss.contains(id))
             .cloned()
             .collect();
-        if !missing_permissionss.is_empty() {
+        if !missing_permissions.is_empty() {
             return Err(Error::from_string(
-                format!("permissions do not exist: {:?}", missing_permissionss),
+                format!("permissions do not exist: {:?}", missing_permissions),
                 StatusCode::BAD_REQUEST,
             ));
         }
         // Assign permissions
         for perm_id in &req.0.permissions {
             let user_perm = entities::user_permissions::ActiveModel {
-                user_id: Set(uuid.0),
+                user_id: Set(user.id),
                 permission_id: Set(*perm_id),
                 ..Default::default()
             };
@@ -371,29 +368,36 @@ impl UsersApi {
         Ok(PlainText("permissions assigned".to_string()))
     }
 
-    #[oai(path = "/:uuid/permissions", method = "delete")]
+    #[oai(path = "/:username/permissions", method = "delete")]
     async fn remove_permissionss_from_user(
         &self,
         db: Data<&DatabaseConnection>,
         claims: BearerAuthorization,
-        uuid: poem_openapi::param::Path<uuid::Uuid>,
+        username: poem_openapi::param::Path<String>,
         req: Json<RemovepermissionssRequest>,
     ) -> Result<PlainText<String>> {
-        if !claims.permissions.contains(&"assign permission".to_string()) {
-            return Err(Error::from_string("Not enough permissions", StatusCode::UNAUTHORIZED));
+        if !claims
+            .permissions
+            .contains(&"assign permission".to_string())
+        {
+            return Err(Error::from_string(
+                "Not enough permissions",
+                StatusCode::UNAUTHORIZED,
+            ));
         }
         // Check if users exists
-        let users = entities::users::Entity::find_by_id(uuid.0)
+        let user = entities::users::Entity::find()
+            .filter(entities::users::Column::Name.eq(&username.0))
             .one(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
-        if users.is_none() {
+        let Some(user) = user else {
             return Err(Error::from_string("User not found", StatusCode::NOT_FOUND));
-        }
+        };
         // Remove permissions
         for perm_id in &req.0.permissions {
             let res = entities::user_permissions::Entity::delete_many()
-                .filter(entities::user_permissions::Column::UserId.eq(uuid.0))
+                .filter(entities::user_permissions::Column::UserId.eq(user.id))
                 .filter(entities::user_permissions::Column::PermissionId.eq(*perm_id))
                 .exec(*db)
                 .await
@@ -421,8 +425,8 @@ impl UsersApi {
             .all(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
-        let uuids = users.into_iter().map(|u| u.id).collect();
-        Ok(GetUsersResponse::Ok(Json(uuids)))
+        let usernames = users.into_iter().map(|u| u.name).collect();
+        Ok(GetUsersResponse::Ok(Json(usernames)))
     }
 
     #[oai(path = "/batch", method = "post")]
@@ -439,12 +443,12 @@ impl UsersApi {
             ));
         }
         let users_with_permissions = entities::users::Entity::find()
-            .filter(entities::users::Column::Id.is_in(req.0.uuids.clone()))
+            .filter(entities::users::Column::Name.is_in(req.0.usernames.clone()))
             .find_with_related(entities::permissions::Entity)
             .all(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
-        
+
         let result: Vec<UserWithPermissions> = users_with_permissions
             .into_iter()
             .map(|(user, permissions)| UserWithPermissions {
@@ -453,7 +457,7 @@ impl UsersApi {
                 permissions: permissions.into_iter().map(|p| p.id).collect(),
             })
             .collect();
-        
+
         Ok(BatchUsersResponse::Ok(Json(result)))
     }
 }
