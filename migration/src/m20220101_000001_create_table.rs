@@ -1,7 +1,7 @@
 use sea_orm_migration::{
-    prelude::*,
+    prelude::{extension::postgres::Type, *},
     schema::*,
-    sea_orm::{entity},
+    sea_orm::{entity, EnumIter, Iterable},
 };
 use uuid::Uuid;
 
@@ -11,6 +11,12 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager.create_type(Type::create()
+            .as_enum(UserStatusEnum)
+            .values(UserStatusVariants::iter())
+            .to_owned()
+        ).await?;
+
         // Create users table
         manager
             .create_table(
@@ -20,6 +26,13 @@ impl MigrationTrait for Migration {
                     .col(uuid(Users::Id).primary_key().not_null())
                     .col(string(Users::Name).not_null().unique_key())
                     .col(string(Users::PasswordHash))
+                    .col(date_time(Users::CreationTime).default(Expr::current_timestamp()))
+                    .col(date_time(Users::LastLoginTime).default(Expr::current_timestamp()))
+                    .col(date_time(Users::LastEditTime).default(Expr::current_timestamp()))
+                    .col(
+                        enumeration(Users::Status, UserStatusEnum, UserStatusVariants::iter())
+                            .default(Expr::value(UserStatusVariants::Active.to_string())),
+                    )
                     .to_owned(),
             )
             .await?;
@@ -76,7 +89,7 @@ impl MigrationTrait for Migration {
             "assign permission",
             "create post",
             "delete post",
-            "update post"
+            "update post",
         ];
         for perm in permissions {
             let insert = Query::insert()
@@ -107,11 +120,25 @@ impl MigrationTrait for Migration {
 }
 
 #[derive(DeriveIden)]
+struct UserStatusEnum;
+
+#[derive(DeriveIden, EnumIter)]
+enum UserStatusVariants {
+    Active,
+    Inactive,
+    Banned,
+}
+
+#[derive(DeriveIden)]
 enum Users {
     Id,
     Table,
     Name,
     PasswordHash,
+    CreationTime,
+    LastLoginTime,
+    LastEditTime,
+    Status,
 }
 
 #[derive(DeriveIden)]
