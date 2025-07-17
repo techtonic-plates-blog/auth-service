@@ -3,6 +3,7 @@ use crate::auth::BearerAuthorization;
 use argon2::PasswordHasher;
 use entities::sea_orm_active_enums::UserStatusEnum;
 use poem::{Error, Result, http::StatusCode, web::Data};
+use poem_openapi::param::Query;
 use poem_openapi::payload::PlainText;
 use poem_openapi::{ApiResponse, Object, OpenApi, payload::Json};
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
@@ -17,11 +18,8 @@ pub struct UserDetails {
     pub status: UserStatusEnum,
 }
 
-
-
 #[derive(Object, Debug)]
 pub struct UpdatePasswordRequest {
-
     #[oai(validator(min_length = 8))]
     pub new_password: String,
 }
@@ -40,7 +38,7 @@ pub struct ComprehensiveUpdateUserRequest {
     #[oai(validator(min_length = 8))]
     pub password: Option<String>,
     pub permissions: Option<Vec<uuid::Uuid>>,
-    pub status: Option<UserStatusEnum>
+    pub status: Option<UserStatusEnum>,
 }
 
 #[derive(ApiResponse)]
@@ -139,7 +137,7 @@ impl UsersApi {
         match user {
             Some(user) => {
                 let (user, permissions) = user;
-            
+
                 let user_with_permissions = UserDetails {
                     id: user.id.clone(),
                     name: user.name.clone(),
@@ -369,17 +367,20 @@ impl UsersApi {
                 .into_iter()
                 .map(|perm| perm.id)
                 .collect();
-            
+
             let missing_permissions: Vec<uuid::Uuid> = new_permissions
                 .iter()
                 .filter(|id| !found_permissions.contains(id))
                 .cloned()
                 .collect();
-            
+
             if !missing_permissions.is_empty() {
-                return Ok(ComprehensiveUpdateUserResponse::PermissionsDoNotExist(PlainText(
-                    format!("Permissions do not exist: {:?}", missing_permissions),
-                )));
+                return Ok(ComprehensiveUpdateUserResponse::PermissionsDoNotExist(
+                    PlainText(format!(
+                        "Permissions do not exist: {:?}",
+                        missing_permissions
+                    )),
+                ));
             }
 
             // Remove all existing permissions for this user
@@ -404,7 +405,8 @@ impl UsersApi {
         }
 
         Ok(ComprehensiveUpdateUserResponse::Ok(PlainText(format!(
-            "User {} updated successfully", updated_user.name
+            "User {} updated successfully",
+            updated_user.name
         ))))
     }
 
@@ -460,8 +462,11 @@ impl UsersApi {
         let user_id = user.id;
         let mut user_model: entities::users::ActiveModel = user.into();
         user_model.last_edit_time = Set(chrono::Utc::now().naive_utc());
-        user_model.update(*db).await.map_err(poem::error::InternalServerError)?;
-        
+        user_model
+            .update(*db)
+            .await
+            .map_err(poem::error::InternalServerError)?;
+
         // Assign permissions
         for perm_id in &req.0.permissions {
             let user_perm = entities::user_permissions::ActiveModel {
@@ -507,8 +512,11 @@ impl UsersApi {
         let user_id = user.id;
         let mut user_model: entities::users::ActiveModel = user.into();
         user_model.last_edit_time = Set(chrono::Utc::now().naive_utc());
-        user_model.update(*db).await.map_err(poem::error::InternalServerError)?;
-        
+        user_model
+            .update(*db)
+            .await
+            .map_err(poem::error::InternalServerError)?;
+
         // Remove permissions
         for perm_id in &req.0.permissions {
             let res = entities::user_permissions::Entity::delete_many()
@@ -529,6 +537,8 @@ impl UsersApi {
         &self,
         claims: BearerAuthorization,
         db: Data<&DatabaseConnection>,
+        status: Query<Option<UserStatusEnum>>,
+        permissions: Query<Option<Vec<uuid::Uuid>>>,
     ) -> Result<GetUsersResponse> {
         if !claims.permissions.contains(&"get user".to_string()) {
             return Err(Error::from_string(
@@ -536,7 +546,40 @@ impl UsersApi {
                 StatusCode::UNAUTHORIZED,
             ));
         }
-        let users = entities::users::Entity::find()
+        let mut query = entities::users::Entity::find();
+
+        if let Some(status) = status.0 {
+            query = query.filter(entities::users::Column::Status.eq(status));
+        }
+        if let Some(permission_ids) = permissions.0 {
+            let user_ids_with_permissions = entities::user_permissions::Entity::find()
+                .filter(
+                    entities::user_permissions::Column::PermissionId.is_in(permission_ids.clone()),
+                )
+                .all(*db)
+                .await
+                .map_err(poem::error::InternalServerError)?;
+
+            // Group by user_id and count permissions
+            let mut user_permission_counts: std::collections::HashMap<uuid::Uuid, usize> =
+                std::collections::HashMap::new();
+            for user_perm in user_ids_with_permissions {
+                *user_permission_counts.entry(user_perm.user_id).or_insert(0) += 1;
+            }
+
+            // Filter users who have all the required permissions
+            let required_permission_count = permission_ids.len();
+            let user_ids_with_all_permissions: Vec<uuid::Uuid> = user_permission_counts
+                .into_iter()
+                .filter(|(_, count)| *count == required_permission_count)
+                .map(|(user_id, _)| user_id)
+                .collect();
+
+            // Apply the user ID filter to the main query
+            query = query.filter(entities::users::Column::Id.is_in(user_ids_with_all_permissions));
+        }
+
+        let users = query
             .all(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
