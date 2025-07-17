@@ -32,6 +32,13 @@ pub struct RegisterRequest {
     pub permissions: Vec<uuid::Uuid>,
 }
 
+#[derive(Object, Debug)]
+pub struct ComprehensiveUpdateUserRequest {
+    pub name: Option<String>,
+    pub password: Option<String>,
+    pub permissions: Option<Vec<uuid::Uuid>>,
+}
+
 #[derive(ApiResponse)]
 enum RegisterResponse {
     #[oai(status = 201)]
@@ -87,6 +94,18 @@ enum UpdatePasswordResponse {
     NotFound(PlainText<String>),
     #[oai(status = 401)]
     Unauthorized(PlainText<String>),
+}
+
+#[derive(ApiResponse)]
+enum ComprehensiveUpdateUserResponse {
+    #[oai(status = 200)]
+    Ok(PlainText<String>),
+    #[oai(status = 404)]
+    NotFound(PlainText<String>),
+    #[oai(status = 401)]
+    Unauthorized(PlainText<String>),
+    #[oai(status = 400)]
+    PermissionsDoNotExist(PlainText<String>),
 }
 
 #[OpenApi(prefix_path = "/users", tag = "ApiTags::Users")]
@@ -303,6 +322,109 @@ impl UsersApi {
         Ok(UpdatePasswordResponse::Ok(PlainText(
             "Password updated successfully".to_string(),
         )))
+    }
+
+    #[oai(path = "/:username", method = "patch")]
+    async fn comprehensive_update_user(
+        &self,
+        db: Data<&DatabaseConnection>,
+        claims: BearerAuthorization,
+        username: poem_openapi::param::Path<String>,
+        req: Json<ComprehensiveUpdateUserRequest>,
+    ) -> Result<ComprehensiveUpdateUserResponse> {
+        if !claims.permissions.contains(&"update user".to_string()) {
+            return Ok(ComprehensiveUpdateUserResponse::Unauthorized(PlainText(
+                "Not enough permissions".to_string(),
+            )));
+        }
+
+        // Find the user
+        let user = entities::users::Entity::find()
+            .filter(entities::users::Column::Name.eq(&username.0))
+            .one(*db)
+            .await
+            .map_err(poem::error::InternalServerError)?;
+        let Some(mut user) = user else {
+            return Ok(ComprehensiveUpdateUserResponse::NotFound(PlainText(
+                "User not found".to_string(),
+            )));
+        };
+
+        // Update name if provided
+        if let Some(new_name) = &req.0.name {
+            user.name = new_name.clone();
+        }
+
+        // Update password if provided
+        if let Some(new_password) = &req.0.password {
+            let salt = argon2::password_hash::SaltString::generate(
+                &mut argon2::password_hash::rand_core::OsRng,
+            );
+            let argon2 = argon2::Argon2::default();
+            let password_hash = argon2
+                .hash_password(new_password.as_bytes(), &salt)
+                .map_err(|e| {
+                    poem::Error::from_string(e.to_string(), StatusCode::INTERNAL_SERVER_ERROR)
+                })?
+                .to_string();
+            user.password_hash = password_hash;
+        }
+
+        // Update the user in the database
+        let active: entities::users::ActiveModel = user.clone().into();
+        let updated_user = active
+            .update(*db)
+            .await
+            .map_err(poem::error::InternalServerError)?;
+
+        // Update permissions if provided
+        if let Some(new_permissions) = &req.0.permissions {
+            // Check if all permissions exist
+            let found_permissions: Vec<uuid::Uuid> = entities::permissions::Entity::find()
+                .filter(entities::permissions::Column::Id.is_in(new_permissions.clone()))
+                .all(*db)
+                .await
+                .map_err(poem::error::InternalServerError)?
+                .into_iter()
+                .map(|perm| perm.id)
+                .collect();
+            
+            let missing_permissions: Vec<uuid::Uuid> = new_permissions
+                .iter()
+                .filter(|id| !found_permissions.contains(id))
+                .cloned()
+                .collect();
+            
+            if !missing_permissions.is_empty() {
+                return Ok(ComprehensiveUpdateUserResponse::PermissionsDoNotExist(PlainText(
+                    format!("Permissions do not exist: {:?}", missing_permissions),
+                )));
+            }
+
+            // Remove all existing permissions for this user
+            entities::user_permissions::Entity::delete_many()
+                .filter(entities::user_permissions::Column::UserId.eq(user.id))
+                .exec(*db)
+                .await
+                .map_err(poem::error::InternalServerError)?;
+
+            // Add new permissions
+            for perm_id in new_permissions {
+                let user_perm = entities::user_permissions::ActiveModel {
+                    user_id: Set(user.id),
+                    permission_id: Set(*perm_id),
+                    ..Default::default()
+                };
+                entities::user_permissions::Entity::insert(user_perm)
+                    .exec(*db)
+                    .await
+                    .map_err(poem::error::InternalServerError)?;
+            }
+        }
+
+        Ok(ComprehensiveUpdateUserResponse::Ok(PlainText(format!(
+            "User {} updated successfully", updated_user.name
+        ))))
     }
 
     #[oai(path = "/:username/permissions", method = "post")]
