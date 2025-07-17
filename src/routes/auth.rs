@@ -6,6 +6,7 @@ use chrono::{Duration, Utc};
 use entities::permissions::Entity as Permissions;
 use entities::users::Entity as User;
 use entities::user_permissions::Entity as UserPermissions;
+use entities::sea_orm_active_enums::UserStatusEnum;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use poem::http::StatusCode;
 use poem::{Result, error::InternalServerError, web::Data};
@@ -37,6 +38,8 @@ enum LoginResponse {
     Ok(Json<Tokens>),
     #[oai(status = 401)]
     Unauthorized,
+    #[oai(status = 401)]
+    Banned
 }
 #[derive(Object)]
 struct RefreshRequest {
@@ -48,6 +51,8 @@ enum RefreshResponse {
     Ok(Json<Tokens>),
     #[oai(status = 401)]
     Unauthorized,
+    #[oai(status = 401)]
+    Banned
 }
 
 #[derive(Object)]
@@ -77,6 +82,11 @@ impl AuthApi {
         let Some(users) = users else {
             return Ok(LoginResponse::Unauthorized);
         };
+
+        if users.status == UserStatusEnum::Banned {
+            return Ok(LoginResponse::Banned);
+        }
+
         let password_hash = PasswordHash::new(&users.password_hash).map_err(|e| {
             poem::Error::from_string(e.to_string(), StatusCode::INTERNAL_SERVER_ERROR)
         })?;
@@ -172,6 +182,10 @@ impl AuthApi {
         let Some(users) = users else {
             return Ok(RefreshResponse::Unauthorized);
         };
+
+        if users.status == UserStatusEnum::Banned {
+            return Ok(RefreshResponse::Banned);
+        }
 
         // Get permissions
         let permissions = UserPermissions::find()
