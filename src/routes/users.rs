@@ -1,6 +1,7 @@
 use super::ApiTags;
 use crate::auth::BearerAuthorization;
 use argon2::PasswordHasher;
+use entities::sea_orm_active_enums::UserStatusEnum;
 use poem::{Error, Result, http::StatusCode, web::Data};
 use poem_openapi::payload::PlainText;
 use poem_openapi::{ApiResponse, Object, OpenApi, payload::Json};
@@ -38,6 +39,7 @@ pub struct ComprehensiveUpdateUserRequest {
     #[oai(validator(min_length = 8))]
     pub password: Option<String>,
     pub permissions: Option<Vec<uuid::Uuid>>,
+    pub status: Option<UserStatusEnum>
 }
 
 #[derive(ApiResponse)]
@@ -126,6 +128,7 @@ impl UsersApi {
         }
         let user = entities::users::Entity::find()
             .filter(entities::users::Column::Name.eq(username.0))
+            .filter(entities::users::Column::Status.eq(UserStatusEnum::Active))
             .find_with_related(entities::permissions::Entity)
             .all(*db)
             .await
@@ -203,6 +206,7 @@ impl UsersApi {
             name: Set(request.username.clone()),
             password_hash: Set(password_hash),
             id: Set(uuid::Uuid::new_v4()),
+            ..Default::default()
         };
         let users = entities::users::Entity::insert(new_user)
             .exec(*db)
@@ -282,6 +286,7 @@ impl UsersApi {
             })?
             .to_string();
         users.password_hash = password_hash;
+        users.last_edit_time = chrono::Utc::now().naive_utc();
         let active: entities::users::ActiveModel = users.into();
         active
             .update(*db)
@@ -337,6 +342,12 @@ impl UsersApi {
                 .to_string();
             user.password_hash = password_hash;
         }
+
+        if let Some(new_status) = &req.0.status {
+            user.status = new_status.clone();
+        }
+        // Set last edit time
+        user.last_edit_time = chrono::Utc::now().naive_utc();
 
         // Update the user in the database
         let active: entities::users::ActiveModel = user.clone().into();
@@ -443,10 +454,16 @@ impl UsersApi {
                 StatusCode::BAD_REQUEST,
             ));
         }
+        // Update last edit time for the user
+        let user_id = user.id;
+        let mut user_model: entities::users::ActiveModel = user.into();
+        user_model.last_edit_time = Set(chrono::Utc::now().naive_utc());
+        user_model.update(*db).await.map_err(poem::error::InternalServerError)?;
+        
         // Assign permissions
         for perm_id in &req.0.permissions {
             let user_perm = entities::user_permissions::ActiveModel {
-                user_id: Set(user.id),
+                user_id: Set(user_id),
                 permission_id: Set(*perm_id),
                 ..Default::default()
             };
@@ -484,10 +501,16 @@ impl UsersApi {
         let Some(user) = user else {
             return Err(Error::from_string("User not found", StatusCode::NOT_FOUND));
         };
+        // Update last edit time for the user
+        let user_id = user.id;
+        let mut user_model: entities::users::ActiveModel = user.into();
+        user_model.last_edit_time = Set(chrono::Utc::now().naive_utc());
+        user_model.update(*db).await.map_err(poem::error::InternalServerError)?;
+        
         // Remove permissions
         for perm_id in &req.0.permissions {
             let res = entities::user_permissions::Entity::delete_many()
-                .filter(entities::user_permissions::Column::UserId.eq(user.id))
+                .filter(entities::user_permissions::Column::UserId.eq(user_id))
                 .filter(entities::user_permissions::Column::PermissionId.eq(*perm_id))
                 .exec(*db)
                 .await

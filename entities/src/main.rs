@@ -25,7 +25,9 @@ async fn generate_seaorm_entities(
         .arg("--seaography")
         .arg("--lib")
         .arg("--model-extra-derives")
-        .arg("poem_openapi::Object");
+        .arg("poem_openapi::Object")
+        .arg("--enum-extra-attributes")
+        .arg("poem_openapi::Enum");
     
  
     

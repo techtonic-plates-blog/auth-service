@@ -125,6 +125,7 @@ impl MeApi {
             .to_string();
         let mut active: entities::users::ActiveModel = user.into();
         active.password_hash = Set(new_hash);
+        active.last_edit_time = Set(chrono::Utc::now().naive_utc());
         active.update(*db)
             .await
             .map_err(poem::error::InternalServerError)?;
@@ -161,6 +162,7 @@ impl MeApi {
         }
         let mut active: entities::users::ActiveModel = user.into();
         active.name = Set(req.new_username.clone());
+        active.last_edit_time = Set(chrono::Utc::now().naive_utc());
         active.update(*db)
             .await
             .map_err(poem::error::InternalServerError)?;

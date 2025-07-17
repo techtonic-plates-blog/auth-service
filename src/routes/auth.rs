@@ -10,7 +10,7 @@ use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use poem::http::StatusCode;
 use poem::{Result, error::InternalServerError, web::Data};
 use poem_openapi::{ApiResponse, Object, OpenApi, payload::Json};
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 
 pub struct AuthApi;
 
@@ -84,6 +84,12 @@ impl AuthApi {
         if verify_result.is_err() {
             return Ok(LoginResponse::Unauthorized);
         }
+
+        // Update last login time
+        let mut user_model: entities::users::ActiveModel = users.clone().into();
+        user_model.last_login_time = Set(Utc::now().naive_utc());
+        user_model.update(*db).await.map_err(InternalServerError)?;
+
         let permissions = UserPermissions::find()
             .filter(entities::user_permissions::Column::UserId.eq(users.id.clone()))
             .find_also_related(Permissions)
