@@ -10,7 +10,9 @@ pub struct MeApi;
 
 #[derive(Object, Debug)]
 pub struct UpdateMyPasswordRequest {
+    #[oai(validator(min_length = 8))]
     pub old_password: String,
+    #[oai(validator(min_length = 8))]
     pub new_password: String,
 }
 

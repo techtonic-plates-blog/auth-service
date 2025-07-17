@@ -15,19 +15,19 @@ pub struct UserWithPermissions {
     pub permissions: Vec<uuid::Uuid>,
 }
 
-#[derive(Object, Debug)]
-pub struct UpdateUserRequest {
-    pub name: Option<String>,
-}
+
 
 #[derive(Object, Debug)]
 pub struct UpdatePasswordRequest {
+
+    #[oai(validator(min_length = 8))]
     pub new_password: String,
 }
 
 #[derive(Object, Debug)]
 pub struct RegisterRequest {
     pub username: String,
+    #[oai(validator(min_length = 8))]
     pub password: String,
     pub permissions: Vec<uuid::Uuid>,
 }
@@ -35,6 +35,7 @@ pub struct RegisterRequest {
 #[derive(Object, Debug)]
 pub struct ComprehensiveUpdateUserRequest {
     pub name: Option<String>,
+    #[oai(validator(min_length = 8))]
     pub password: Option<String>,
     pub permissions: Option<Vec<uuid::Uuid>>,
 }
@@ -245,39 +246,6 @@ impl UsersApi {
             return Err(Error::from_string("User not found", StatusCode::NOT_FOUND));
         }
         Ok(PlainText(username.0.to_string()))
-    }
-
-    #[oai(path = "/:username", method = "patch")]
-    async fn update_user(
-        &self,
-        db: Data<&DatabaseConnection>,
-        claims: BearerAuthorization,
-        username: poem_openapi::param::Path<String>,
-        req: Json<UpdateUserRequest>,
-    ) -> Result<PlainText<String>> {
-        if !claims.permissions.contains(&"update user".to_string()) {
-            return Err(Error::from_string(
-                "Not enough permissions",
-                StatusCode::UNAUTHORIZED,
-            ));
-        }
-        let users = entities::users::Entity::find()
-            .filter(entities::users::Column::Name.eq(&username.0))
-            .one(*db)
-            .await
-            .map_err(poem::error::InternalServerError)?;
-        let Some(mut users) = users else {
-            return Err(Error::from_string("User not found", StatusCode::NOT_FOUND));
-        };
-        if let Some(name) = &req.0.name {
-            users.name = name.clone();
-        }
-        let active: entities::users::ActiveModel = users.into();
-        let updated = active
-            .update(*db)
-            .await
-            .map_err(poem::error::InternalServerError)?;
-        Ok(PlainText(updated.id.to_string()))
     }
 
     #[oai(path = "/:username/password", method = "patch")]
