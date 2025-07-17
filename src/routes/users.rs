@@ -10,10 +10,11 @@ use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, Qu
 pub struct UsersApi;
 
 #[derive(Object, Debug)]
-pub struct UserWithPermissions {
+pub struct UserDetails {
     pub id: uuid::Uuid,
     pub name: String,
     pub permissions: Vec<uuid::Uuid>,
+    pub status: UserStatusEnum,
 }
 
 
@@ -57,7 +58,7 @@ enum RegisterResponse {
 #[derive(ApiResponse)]
 enum GetUserResponse {
     #[oai(status = 200)]
-    Ok(Json<UserWithPermissions>),
+    Ok(Json<UserDetails>),
     #[oai(status = 404)]
     NotFound,
 }
@@ -86,7 +87,7 @@ pub struct BatchUsersRequest {
 #[derive(ApiResponse)]
 enum BatchUsersResponse {
     #[oai(status = 200)]
-    Ok(Json<Vec<UserWithPermissions>>),
+    Ok(Json<Vec<UserDetails>>),
 }
 
 #[derive(ApiResponse)]
@@ -139,10 +140,11 @@ impl UsersApi {
             Some(user) => {
                 let (user, permissions) = user;
             
-                let user_with_permissions = UserWithPermissions {
+                let user_with_permissions = UserDetails {
                     id: user.id.clone(),
                     name: user.name.clone(),
                     permissions: permissions.clone().into_iter().map(|p| p.id).collect(),
+                    status: user.status,
                 };
 
                 Ok(GetUserResponse::Ok(Json(user_with_permissions)))
@@ -562,12 +564,13 @@ impl UsersApi {
             .await
             .map_err(poem::error::InternalServerError)?;
 
-        let result: Vec<UserWithPermissions> = users_with_permissions
+        let result: Vec<UserDetails> = users_with_permissions
             .into_iter()
-            .map(|(user, permissions)| UserWithPermissions {
+            .map(|(user, permissions)| UserDetails {
                 id: user.id,
                 name: user.name,
                 permissions: permissions.into_iter().map(|p| p.id).collect(),
+                status: user.status,
             })
             .collect();
 
