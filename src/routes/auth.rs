@@ -4,10 +4,10 @@ use crate::routes::ApiTags;
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use chrono::{Duration, Utc};
 use entities::permissions::Entity as Permissions;
-use entities::users::Entity as User;
-use entities::user_permissions::Entity as UserPermissions;
 use entities::sea_orm_active_enums::UserStatusEnum;
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use entities::user_permissions::Entity as UserPermissions;
+use entities::users::Entity as User;
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use poem::http::StatusCode;
 use poem::{Result, error::InternalServerError, web::Data};
 use poem_openapi::{ApiResponse, Object, OpenApi, payload::Json};
@@ -55,7 +55,7 @@ enum RefreshResponse {
 struct RegisterRequest {
     username: String,
     password: String,
-    permissions: Vec<uuid::Uuid>
+    permissions: Vec<uuid::Uuid>,
 }
 
 #[OpenApi(prefix_path = "/auth", tag = "ApiTags::Auth")]
@@ -128,13 +128,15 @@ impl AuthApi {
         let jwt = encode(
             &Header::new(Algorithm::RS256),
             &jwt_claims,
-            &EncodingKey::from_rsa_pem(CONFIG.jwt_secret_key.as_bytes()).map_err(InternalServerError)?,
+            &EncodingKey::from_rsa_pem(CONFIG.jwt_secret_key.as_bytes())
+                .map_err(InternalServerError)?,
         )
         .map_err(InternalServerError)?;
         let refresher = encode(
             &Header::new(Algorithm::RS256),
             &refresher_claims,
-            &EncodingKey::from_rsa_pem(CONFIG.jwt_secret_key.as_bytes()).map_err(InternalServerError)?,
+            &EncodingKey::from_rsa_pem(CONFIG.jwt_secret_key.as_bytes())
+                .map_err(InternalServerError)?,
         )
         .map_err(InternalServerError)?;
 
@@ -157,7 +159,8 @@ impl AuthApi {
     ) -> Result<RefreshResponse> {
         // Decode the refresher token
         let decoding_key =
-            &jsonwebtoken::DecodingKey::from_rsa_pem(CONFIG.jwt_public_key.as_bytes()).map_err(InternalServerError)?;
+            &jsonwebtoken::DecodingKey::from_rsa_pem(CONFIG.jwt_public_key.as_bytes())
+                .map_err(InternalServerError)?;
         let validation = jsonwebtoken::Validation::new(Algorithm::RS256);
         let token_data =
             match jsonwebtoken::decode::<Claims>(&request.refresher, decoding_key, &validation) {
@@ -215,13 +218,15 @@ impl AuthApi {
         let jwt = encode(
             &Header::new(Algorithm::RS256),
             &jwt_claims,
-            &EncodingKey::from_rsa_pem(CONFIG.jwt_secret_key.as_bytes()).map_err(InternalServerError)?,
+            &EncodingKey::from_rsa_pem(CONFIG.jwt_secret_key.as_bytes())
+                .map_err(InternalServerError)?,
         )
         .map_err(InternalServerError)?;
         let refresher = encode(
             &Header::new(Algorithm::RS256),
             &refresher_claims,
-            &EncodingKey::from_rsa_pem(CONFIG.jwt_secret_key.as_bytes()).map_err(InternalServerError)?,
+            &EncodingKey::from_rsa_pem(CONFIG.jwt_secret_key.as_bytes())
+                .map_err(InternalServerError)?,
         )
         .map_err(InternalServerError)?;
 
@@ -236,6 +241,4 @@ impl AuthApi {
             },
         })))
     }
-
- 
 }

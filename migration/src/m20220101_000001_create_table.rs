@@ -90,6 +90,8 @@ impl MigrationTrait for Migration {
             "create post",
             "delete post",
             "update post",
+            "add asset",
+            "delete asset",
         ];
         for perm in permissions {
             let insert = Query::insert()
