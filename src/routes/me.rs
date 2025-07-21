@@ -28,6 +28,28 @@ pub struct MeInfo {
     pub permissions: Vec<String>,
 }
 
+#[derive(poem_openapi::Enum, Debug, Clone)]
+pub enum AllowedUserStatus {
+    #[oai(rename = "active")]
+    Active,
+    #[oai(rename = "inactive")]
+    Inactive,
+}
+
+impl From<AllowedUserStatus> for entities::sea_orm_active_enums::UserStatusEnum {
+    fn from(status: AllowedUserStatus) -> Self {
+        match status {
+            AllowedUserStatus::Active => entities::sea_orm_active_enums::UserStatusEnum::Active,
+            AllowedUserStatus::Inactive => entities::sea_orm_active_enums::UserStatusEnum::Inactive,
+        }
+    }
+}
+
+#[derive(Object, Debug)]
+pub struct UpdateStatusRequest {
+    pub status: AllowedUserStatus,
+}
+
 #[derive(ApiResponse)]
 enum MeGetResponse {
     #[oai(status = 200)]
@@ -167,5 +189,38 @@ impl MeApi {
             .await
             .map_err(poem::error::InternalServerError)?;
         Ok(MeUpdateResponse::Ok(PlainText("Username updated".to_string())))
+    }
+
+    /// Update current user's status
+    #[oai(path = "/status", method = "patch")]
+    async fn update_status(
+        &self,
+        db: Data<&DatabaseConnection>,
+        claims: BearerAuthorization,
+        req: Json<UpdateStatusRequest>,
+    ) -> Result<MeUpdateResponse> {
+        let user_id = match uuid::Uuid::parse_str(&claims.sub) {
+            Ok(id) => id,
+            Err(_) => return Ok(MeUpdateResponse::Unauthorized(PlainText("Invalid user id".to_string()))),
+        };
+
+        let user = entities::users::Entity::find_by_id(user_id)
+            .one(*db)
+            .await
+            .map_err(poem::error::InternalServerError)?;
+
+        let Some(user) = user else {
+            return Ok(MeUpdateResponse::NotFound(PlainText("User not found".to_string())));
+        };
+
+        let mut active: entities::users::ActiveModel = user.into();
+        active.status = Set(req.status.clone().into());
+        active.last_edit_time = Set(chrono::Utc::now().naive_utc());
+        
+        active.update(*db)
+            .await
+            .map_err(poem::error::InternalServerError)?;
+
+        Ok(MeUpdateResponse::Ok(PlainText(format!("Status updated to {:?}", req.status))))
     }
 }
