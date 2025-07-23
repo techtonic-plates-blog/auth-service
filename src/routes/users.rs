@@ -26,6 +26,8 @@ pub struct UpdatePasswordRequest {
 
 #[derive(Object, Debug)]
 pub struct RegisterRequest {
+
+    #[oai(validator(min_length = 8))]
     pub username: String,
     #[oai(validator(min_length = 8))]
     pub password: String,
@@ -34,6 +36,8 @@ pub struct RegisterRequest {
 
 #[derive(Object, Debug)]
 pub struct ComprehensiveUpdateUserRequest {
+
+    #[oai(validator(min_length = 3))]
     pub name: Option<String>,
     #[oai(validator(min_length = 8))]
     pub password: Option<String>,
