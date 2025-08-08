@@ -1,7 +1,7 @@
 use sea_orm_migration::{
     prelude::{extension::postgres::Type, *},
     schema::*,
-    sea_orm::{entity, EnumIter, Iterable},
+    sea_orm::{EnumIter, Iterable},
 };
 use uuid::Uuid;
 
@@ -37,6 +37,22 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        manager.create_table(
+            Table::create()
+                .table(PermissionAction::Table)
+                .if_not_exists()
+                .col(string(PermissionAction::Action).primary_key().not_null())
+                .to_owned(),
+        ).await?;
+
+        manager.create_table(
+            Table::create()
+                .table(PermissionResource::Table)
+                .if_not_exists()
+                .col(string(PermissionResource::Resource).primary_key().not_null())
+                .to_owned(),
+        ).await?;  
+
         // Create permissions table
         manager
             .create_table(
@@ -44,7 +60,23 @@ impl MigrationTrait for Migration {
                     .table(Permissions::Table)
                     .if_not_exists()
                     .col(uuid(Permissions::Id).primary_key().not_null())
-                    .col(string(Permissions::PermissionName).not_null().unique_key())
+                    .col(string_null(Permissions::PermissionName))
+                    .col(string(Permissions::ActionId).not_null())
+                    .col(string(Permissions::ResourceId).not_null())
+                    .foreign_key(
+                        ForeignKey::create()
+                            .from(Permissions::Table, Permissions::ActionId)
+                            .to(PermissionAction::Table, PermissionAction::Action)
+                            .on_delete(ForeignKeyAction::Cascade)
+                            .on_update(ForeignKeyAction::Cascade),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .from(Permissions::Table, Permissions::ResourceId)
+                            .to(PermissionResource::Table, PermissionResource::Resource)
+                            .on_delete(ForeignKeyAction::Cascade)
+                            .on_update(ForeignKeyAction::Cascade),
+                    )
                     .to_owned(),
             )
             .await?;
@@ -78,29 +110,63 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        // Insert all permissions used in the routes
-        let permissions = vec![
-            "create permission",
-            "delete permission",
-            "create user",
-            "delete user",
-            "update user",
-            "get user",
-            "assign permission",
-            "create post",
-            "delete post",
-            "update post",
-            "add asset",
-            "delete asset",
+        let actions = vec![
+            "create",
+            "read",
+            "update",
+            "delete",
+            
         ];
-        for perm in permissions {
+
+        for action in actions.iter() {
             let insert = Query::insert()
-                .into_table(Permissions::Table)
-                .columns([Permissions::Id, Permissions::PermissionName])
-                .values_panic([Uuid::new_v4().into(), perm.into()])
+                .into_table(PermissionAction::Table)
+                .columns([PermissionAction::Action])
+                .values_panic([action.to_owned().into()])
                 .to_owned();
             manager.exec_stmt(insert).await?;
         }
+
+        let resources = vec![
+            "permission",
+            "user",
+            "post",
+            "asset",
+            "resource", 
+            "action"
+        ];
+
+        for resource in resources {
+            let insert = Query::insert()
+                .into_table(PermissionResource::Table)
+                .columns([PermissionResource::Resource])
+                .values_panic([resource.into()])
+                .to_owned();
+            manager.exec_stmt(insert).await?;
+
+            for action in &actions {
+                let permission_name = format!("{}:{}", action, resource);
+                let insert = Query::insert()
+                    .into_table(Permissions::Table)
+                    .columns([
+                        Permissions::Id,
+                        Permissions::ActionId,
+                        Permissions::ResourceId,
+                        Permissions::PermissionName,
+                    ])
+                    .values_panic([
+                        Uuid::new_v4().into(),
+                        (*action).into(),
+                        (*resource).into(),
+                        permission_name.into(),
+                    ])
+                    .to_owned();
+                manager.exec_stmt(insert).await?;
+            }
+        }
+
+       
+       
 
         Ok(())
     }
@@ -147,6 +213,8 @@ enum Users {
 enum Permissions {
     Id,
     Table,
+    ActionId,
+    ResourceId,
     PermissionName,
 }
 
@@ -155,4 +223,17 @@ enum UserPermissions {
     Table,
     UserId,
     PermissionId,
+}
+
+
+#[derive(DeriveIden)]
+enum PermissionAction {
+    Table,
+    Action
+} 
+
+#[derive(DeriveIden)]
+enum PermissionResource {
+    Table,
+    Resource
 }

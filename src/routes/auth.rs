@@ -1,4 +1,4 @@
-use crate::auth::Claims;
+use crate::auth::{Claims, Permission};
 use crate::config::CONFIG;
 use crate::routes::ApiTags;
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
@@ -105,8 +105,10 @@ impl AuthApi {
         let permissions = permissions
             .into_iter()
             .filter_map(|x| x.1)
-            .map(|x| x.permission_name)
-            .collect::<Vec<String>>();
+            .filter_map(|x| {
+                x.permission_name.and_then(|name| Permission::from_string(&name))
+            })
+            .collect::<Vec<Permission>>();
 
         let jwt_exp = Utc::now() + Duration::minutes(15);
         let refresher_exp = Utc::now() + Duration::days(30);
@@ -196,8 +198,10 @@ impl AuthApi {
         let permissions = permissions
             .into_iter()
             .filter_map(|x| x.1)
-            .map(|x| x.permission_name)
-            .collect::<Vec<String>>();
+            .filter_map(|x| {
+                x.permission_name.and_then(|name| Permission::from_string(&name))
+            })
+            .collect::<Vec<Permission>>();
 
         let jwt_exp = Utc::now() + Duration::minutes(15);
         let refresher_exp = Utc::now() + Duration::days(30);

@@ -11,14 +11,43 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
-    #[sea_orm(unique)]
-    pub permission_name: String,
+    pub permission_name: Option<String>,
+    pub action_id: String,
+    pub resource_id: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
+    #[sea_orm(
+        belongs_to = "super::permission_action::Entity",
+        from = "Column::ActionId",
+        to = "super::permission_action::Column::Action",
+        on_update = "Cascade",
+        on_delete = "Cascade"
+    )]
+    PermissionAction,
+    #[sea_orm(
+        belongs_to = "super::permission_resource::Entity",
+        from = "Column::ResourceId",
+        to = "super::permission_resource::Column::Resource",
+        on_update = "Cascade",
+        on_delete = "Cascade"
+    )]
+    PermissionResource,
     #[sea_orm(has_many = "super::user_permissions::Entity")]
     UserPermissions,
+}
+
+impl Related<super::permission_action::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::PermissionAction.def()
+    }
+}
+
+impl Related<super::permission_resource::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::PermissionResource.def()
+    }
 }
 
 impl Related<super::user_permissions::Entity> for Entity {
@@ -40,6 +69,10 @@ impl ActiveModelBehavior for ActiveModel {}
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelatedEntity)]
 pub enum RelatedEntity {
+    #[sea_orm(entity = "super::permission_action::Entity")]
+    PermissionAction,
+    #[sea_orm(entity = "super::permission_resource::Entity")]
+    PermissionResource,
     #[sea_orm(entity = "super::user_permissions::Entity")]
     UserPermissions,
     #[sea_orm(entity = "super::users::Entity")]

@@ -123,7 +123,7 @@ impl UsersApi {
         db: Data<&DatabaseConnection>,
         username: poem_openapi::param::Path<String>,
     ) -> Result<GetUserResponse> {
-        if !claims.permissions.contains(&"get user".to_string()) {
+        if !claims.has_permission("read", "user") {
             return Err(Error::from_string(
                 "Not enough permissions",
                 StatusCode::UNAUTHORIZED,
@@ -162,7 +162,7 @@ impl UsersApi {
         db: Data<&DatabaseConnection>,
         request: Json<RegisterRequest>,
     ) -> Result<RegisterResponse> {
-        if !claims.permissions.contains(&"create user".to_string()) {
+        if !claims.has_permission("create", "user") {
             return Ok(RegisterResponse::Unauthorized(PlainText(
                 "User does not have enough permissions".to_string(),
             )));
@@ -239,7 +239,7 @@ impl UsersApi {
         claims: BearerAuthorization,
         username: poem_openapi::param::Path<String>,
     ) -> Result<PlainText<String>> {
-        if !claims.permissions.contains(&"delete user".to_string()) {
+        if !claims.has_permission("delete", "user") {
             return Err(Error::from_string(
                 "Not enough permissions",
                 StatusCode::UNAUTHORIZED,
@@ -264,7 +264,7 @@ impl UsersApi {
         username: poem_openapi::param::Path<String>,
         req: Json<UpdatePasswordRequest>,
     ) -> Result<UpdatePasswordResponse> {
-        if !claims.permissions.contains(&"update user".to_string()) {
+        if !claims.has_permission("update", "user") {
             return Ok(UpdatePasswordResponse::Unauthorized(PlainText(
                 "Not enough permissions".to_string(),
             )));
@@ -309,7 +309,7 @@ impl UsersApi {
         username: poem_openapi::param::Path<String>,
         req: Json<ComprehensiveUpdateUserRequest>,
     ) -> Result<ComprehensiveUpdateUserResponse> {
-        if !claims.permissions.contains(&"update user".to_string()) {
+        if !claims.has_permission("update", "user") {
             return Ok(ComprehensiveUpdateUserResponse::Unauthorized(PlainText(
                 "Not enough permissions".to_string(),
             )));
@@ -422,10 +422,7 @@ impl UsersApi {
         username: poem_openapi::param::Path<String>,
         req: Json<AddpermissionssRequest>,
     ) -> Result<PlainText<String>> {
-        if !claims
-            .permissions
-            .contains(&"assign permission".to_string())
-        {
+        if !claims.has_permission("update", "user") {
             return Err(Error::from_string(
                 "Not enough permissions",
                 StatusCode::UNAUTHORIZED,
@@ -494,10 +491,7 @@ impl UsersApi {
         username: poem_openapi::param::Path<String>,
         req: Json<RemovepermissionssRequest>,
     ) -> Result<PlainText<String>> {
-        if !claims
-            .permissions
-            .contains(&"assign permission".to_string())
-        {
+        if !claims.has_permission("update", "user") {
             return Err(Error::from_string(
                 "Not enough permissions",
                 StatusCode::UNAUTHORIZED,
@@ -544,7 +538,7 @@ impl UsersApi {
         status: Query<Option<UserStatusEnum>>,
         permissions: Query<Option<Vec<uuid::Uuid>>>,
     ) -> Result<GetUsersResponse> {
-        if !claims.permissions.contains(&"get user".to_string()) {
+        if !claims.has_permission("read", "user") {
             return Err(Error::from_string(
                 "Not enough permissions",
                 StatusCode::UNAUTHORIZED,
@@ -598,7 +592,7 @@ impl UsersApi {
         db: Data<&DatabaseConnection>,
         req: Json<BatchUsersRequest>,
     ) -> Result<BatchUsersResponse> {
-        if !claims.permissions.contains(&"get user".to_string()) {
+        if !claims.has_permission("read", "user") {
             return Err(Error::from_string(
                 "Not enough permissions",
                 StatusCode::UNAUTHORIZED,

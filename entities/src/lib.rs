@@ -2,6 +2,8 @@
 
 pub mod prelude;
 
+pub mod permission_action;
+pub mod permission_resource;
 pub mod permissions;
 pub mod sea_orm_active_enums;
 pub mod user_permissions;

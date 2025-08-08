@@ -101,7 +101,7 @@ impl MeApi {
             .map_err(poem::error::InternalServerError)?;
         let permissions = user_permissions
             .into_iter()
-            .filter_map(|(_, perm)| perm.map(|p| p.permission_name))
+            .filter_map(|(_, perm)| perm.and_then(|p| p.permission_name))
             .collect::<Vec<String>>();
         let info = MeInfo {
             id: user.id,
