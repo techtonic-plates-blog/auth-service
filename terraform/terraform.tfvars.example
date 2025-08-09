@@ -1,0 +1,6 @@
+# Development environment configuration
+postgres_host = "localhost"
+debezium_user = "debezium"
+debezium_pass = "debezium_password"
+kafka_connect_url = "http://localhost:8083"
+auth_service_database = "auth_service"

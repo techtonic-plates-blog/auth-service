@@ -1,0 +1,45 @@
+FROM docker.io/hashicorp/terraform:1.9
+
+# Install additional tools for Kafka Connect management
+RUN apk add --no-cache \
+    curl \
+    jq \
+    bash \
+    ca-certificates
+
+# Create working directory for terraform configurations
+WORKDIR /terraform
+
+# Copy terraform configuration files
+COPY terraform/ .
+
+# Set default environment variables
+ENV TF_IN_AUTOMATION=1
+ENV TF_INPUT=0
+ENV TF_CLI_ARGS="-no-color"
+
+# Create entrypoint script for terraform operations
+RUN echo '#!/bin/bash' > /entrypoint.sh && \
+    echo 'set -e' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
+    echo '# Initialize terraform if .terraform directory does not exist' >> /entrypoint.sh && \
+    echo 'if [ ! -d ".terraform" ]; then' >> /entrypoint.sh && \
+    echo '  echo "Running Terraform initialization..."' >> /entrypoint.sh && \
+    echo '  ./init.sh' >> /entrypoint.sh && \
+    echo 'fi' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
+    echo '# Execute the command passed to the container' >> /entrypoint.sh && \
+    echo 'exec "$@"' >> /entrypoint.sh && \
+    chmod +x /entrypoint.sh
+
+# Health check for Kafka Connect availability
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f ${KAFKA_CONNECT_URL:-http://kafka-connect:8083}/connectors || exit 1
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["terraform", "plan"]
+
+# Labels for container metadata
+LABEL maintainer="Techtonic Plates Blog"
+LABEL description="Terraform container for auth-service Kafka Connect configuration"
+LABEL version="1.0"
