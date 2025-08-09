@@ -943,14 +943,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hasher"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "clap",
-]
-
-[[package]]
 name = "hashlink"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
