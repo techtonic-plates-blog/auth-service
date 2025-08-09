@@ -123,7 +123,7 @@ impl PermissionsApi {
         req: Json<AddPermissionRequest>,
     ) -> Result<poem_openapi::payload::PlainText<String>> {
         if !claims.has_permission("create", "permission") {
-            return Err(Error::from_string("Not enough permissions", StatusCode::UNAUTHORIZED))
+            return Err(Error::from_string("Not enough permissions", StatusCode::FORBIDDEN))
         }
 
         // Generate permission_name if not provided
@@ -150,7 +150,7 @@ impl PermissionsApi {
         uuid: poem_openapi::param::Path<uuid::Uuid>,
     ) -> Result<poem_openapi::payload::PlainText<String>> {
         if !claims.has_permission("delete", "permission") {
-            return Err(Error::from_string("Not enough permissions", StatusCode::UNAUTHORIZED))
+            return Err(Error::from_string("Not enough permissions", StatusCode::FORBIDDEN))
         }
         let res = entities::permissions::Entity::delete_by_id(uuid.0)
             .exec(*db)
@@ -209,7 +209,7 @@ impl PermissionsApi {
         req: Json<AddActionRequest>,
     ) -> Result<poem_openapi::payload::PlainText<String>> {
         if !claims.has_permission("create", "permission") {
-            return Err(Error::from_string("Not enough permissions", StatusCode::UNAUTHORIZED))
+            return Err(Error::from_string("Not enough permissions", StatusCode::FORBIDDEN))
         }
 
         let active = entities::permission_action::ActiveModel {
@@ -228,7 +228,7 @@ impl PermissionsApi {
         action: poem_openapi::param::Path<String>,
     ) -> Result<poem_openapi::payload::PlainText<String>> {
         if !claims.has_permission("delete", "permission") {
-            return Err(Error::from_string("Not enough permissions", StatusCode::UNAUTHORIZED))
+            return Err(Error::from_string("Not enough permissions", StatusCode::FORBIDDEN))
         }
         let res = PermissionActions::delete_by_id(action.0.clone())
             .exec(*db)
@@ -287,7 +287,7 @@ impl PermissionsApi {
         req: Json<AddResourceRequest>,
     ) -> Result<poem_openapi::payload::PlainText<String>> {
         if !claims.has_permission("create", "permission") {
-            return Err(Error::from_string("Not enough permissions", StatusCode::UNAUTHORIZED))
+            return Err(Error::from_string("Not enough permissions", StatusCode::FORBIDDEN))
         }
 
         let active = entities::permission_resource::ActiveModel {
@@ -306,7 +306,7 @@ impl PermissionsApi {
         resource: poem_openapi::param::Path<String>,
     ) -> Result<poem_openapi::payload::PlainText<String>> {
         if !claims.has_permission("delete", "permission") {
-            return Err(Error::from_string("Not enough permissions", StatusCode::UNAUTHORIZED))
+            return Err(Error::from_string("Not enough permissions", StatusCode::FORBIDDEN))
         }
         let res = PermissionResources::delete_by_id(resource.0.clone())
             .exec(*db)

@@ -53,8 +53,8 @@ enum RegisterResponse {
     PermissionsDoesNotExists(PlainText<String>),
     #[oai(status = 409)]
     UserAlreadyExists(PlainText<String>),
-    #[oai(status = 401)]
-    Unauthorized(PlainText<String>),
+    #[oai(status = 403)]
+    Forbidden(PlainText<String>),
 }
 
 #[derive(ApiResponse)]
@@ -98,8 +98,8 @@ enum UpdatePasswordResponse {
     Ok(PlainText<String>),
     #[oai(status = 404)]
     NotFound(PlainText<String>),
-    #[oai(status = 401)]
-    Unauthorized(PlainText<String>),
+    #[oai(status = 403)]
+    Forbidden(PlainText<String>),
 }
 
 #[derive(ApiResponse)]
@@ -108,8 +108,8 @@ enum ComprehensiveUpdateUserResponse {
     Ok(PlainText<String>),
     #[oai(status = 404)]
     NotFound(PlainText<String>),
-    #[oai(status = 401)]
-    Unauthorized(PlainText<String>),
+    #[oai(status = 403)]
+    Forbidden(PlainText<String>),
     #[oai(status = 400)]
     PermissionsDoNotExist(PlainText<String>),
 }
@@ -126,7 +126,7 @@ impl UsersApi {
         if !claims.has_permission("read", "user") {
             return Err(Error::from_string(
                 "Not enough permissions",
-                StatusCode::UNAUTHORIZED,
+                StatusCode::FORBIDDEN,
             ));
         }
         let user = entities::users::Entity::find()
@@ -163,7 +163,7 @@ impl UsersApi {
         request: Json<RegisterRequest>,
     ) -> Result<RegisterResponse> {
         if !claims.has_permission("create", "user") {
-            return Ok(RegisterResponse::Unauthorized(PlainText(
+            return Ok(RegisterResponse::Forbidden(PlainText(
                 "User does not have enough permissions".to_string(),
             )));
         }
@@ -242,7 +242,7 @@ impl UsersApi {
         if !claims.has_permission("delete", "user") {
             return Err(Error::from_string(
                 "Not enough permissions",
-                StatusCode::UNAUTHORIZED,
+                StatusCode::FORBIDDEN,
             ));
         }
         let res = entities::users::Entity::delete_many()
@@ -265,7 +265,7 @@ impl UsersApi {
         req: Json<UpdatePasswordRequest>,
     ) -> Result<UpdatePasswordResponse> {
         if !claims.has_permission("update", "user") {
-            return Ok(UpdatePasswordResponse::Unauthorized(PlainText(
+            return Ok(UpdatePasswordResponse::Forbidden(PlainText(
                 "Not enough permissions".to_string(),
             )));
         }
@@ -310,7 +310,7 @@ impl UsersApi {
         req: Json<ComprehensiveUpdateUserRequest>,
     ) -> Result<ComprehensiveUpdateUserResponse> {
         if !claims.has_permission("update", "user") {
-            return Ok(ComprehensiveUpdateUserResponse::Unauthorized(PlainText(
+            return Ok(ComprehensiveUpdateUserResponse::Forbidden(PlainText(
                 "Not enough permissions".to_string(),
             )));
         }
@@ -425,7 +425,7 @@ impl UsersApi {
         if !claims.has_permission("update", "user") {
             return Err(Error::from_string(
                 "Not enough permissions",
-                StatusCode::UNAUTHORIZED,
+                StatusCode::FORBIDDEN,
             ));
         }
         // Check if users exists
@@ -494,7 +494,7 @@ impl UsersApi {
         if !claims.has_permission("update", "user") {
             return Err(Error::from_string(
                 "Not enough permissions",
-                StatusCode::UNAUTHORIZED,
+                StatusCode::FORBIDDEN,
             ));
         }
         // Check if users exists
@@ -541,7 +541,7 @@ impl UsersApi {
         if !claims.has_permission("read", "user") {
             return Err(Error::from_string(
                 "Not enough permissions",
-                StatusCode::UNAUTHORIZED,
+                StatusCode::FORBIDDEN,
             ));
         }
         let mut query = entities::users::Entity::find();
@@ -595,7 +595,7 @@ impl UsersApi {
         if !claims.has_permission("read", "user") {
             return Err(Error::from_string(
                 "Not enough permissions",
-                StatusCode::UNAUTHORIZED,
+                StatusCode::FORBIDDEN,
             ));
         }
         let users_with_permissions = entities::users::Entity::find()

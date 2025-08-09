@@ -38,6 +38,8 @@ enum LoginResponse {
     Ok(Json<Tokens>),
     #[oai(status = 401)]
     Unauthorized,
+    #[oai(status = 403)]
+    Forbidden,
 }
 #[derive(Object)]
 struct RefreshRequest {
@@ -80,7 +82,7 @@ impl AuthApi {
         };
 
         if users.status == UserStatusEnum::Banned {
-            return Ok(LoginResponse::Unauthorized);
+            return Ok(LoginResponse::Forbidden);
         }
 
         let password_hash = PasswordHash::new(&users.password_hash).map_err(|e| {
