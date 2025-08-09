@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
     Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize, poem_openapi :: Object,
 )]
 #[sea_orm(table_name = "user_permissions")]
-#[oai(rename = "User_permissions")]
+#[oai(rename = "UserPermissions")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub user_id: Uuid,

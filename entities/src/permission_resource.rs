@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
     Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize, poem_openapi :: Object,
 )]
 #[sea_orm(table_name = "permission_resource")]
-#[oai(rename = "Permission_resource")]
+#[oai(rename = "PermissionResource")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub resource: String,
