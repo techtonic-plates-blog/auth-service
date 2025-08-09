@@ -10,8 +10,6 @@ on:
       - 'src/**'
       - 'entities/**'
       - 'migration/**'
-      - 'hasher/**'
-      - 'terraform/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/**'
@@ -31,8 +29,6 @@ jobs:
             dockerfile: container/Containerfile.entities
           - name: migration
             dockerfile: container/Containerfile.migration
-          - name: terraform
-            dockerfile: container/Containerfile.terraform
 
     steps:
       - name: Checkout repository

@@ -14,7 +14,6 @@ on:
           - auth-service
           - entities
           - migration
-          - terraform
           - all
       tag:
         description: 'Custom tag (optional)'
@@ -68,10 +67,6 @@ jobs:
             "migration")
               echo "dockerfile=container/Containerfile.migration" >> $GITHUB_OUTPUT
               echo "suffix=-migration" >> $GITHUB_OUTPUT
-              ;;
-            "terraform")
-              echo "dockerfile=container/Containerfile.terraform" >> $GITHUB_OUTPUT
-              echo "suffix=-terraform" >> $GITHUB_OUTPUT
               ;;
           esac
 
