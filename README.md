@@ -9,7 +9,6 @@ Pre-built container images are available from GitHub Container Registry:
 - **Main Service**: `ghcr.io/techtonic-plates-blog/auth-service:latest`
 - **Entities Generator**: `ghcr.io/techtonic-plates-blog/auth-service-entities:latest`
 - **Database Migrations**: `ghcr.io/techtonic-plates-blog/auth-service-migration:latest`
-- **Terraform Operations**: `ghcr.io/techtonic-plates-blog/auth-service-terraform:latest`
 
 ### Quick Start with Docker
 

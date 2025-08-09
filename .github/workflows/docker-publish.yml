@@ -32,9 +32,6 @@ jobs:
           - name: migration
             dockerfile: container/Containerfile.migration
             suffix: "-migration"
-          - name: terraform
-            dockerfile: container/Containerfile.terraform
-            suffix: "-terraform"
 
     steps:
       - name: Checkout repository
