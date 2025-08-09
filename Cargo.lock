@@ -201,6 +201,7 @@ dependencies = [
  "once_cell",
  "poem",
  "poem-openapi",
+ "rand",
  "sea-orm",
  "serde",
  "serde_json",
