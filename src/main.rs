@@ -14,10 +14,13 @@ use sea_orm::*;
 use tracing::info;
 use uuid::Uuid;
 
+use crate::middleware::LoggingMiddleware;
+
 use crate::setup::SetupResult;
 
 mod auth;
 mod config;
+mod middleware;
 mod routes;
 mod setup;
 
@@ -89,7 +92,11 @@ async fn create_admin_user(db: &DbConn) -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<(), std::io::Error> {
-    tracing_subscriber::fmt().init();
+    // Initialize tracing with INFO level to capture request/response logs
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
+    
     let SetupResult { db } = setup::setup_all().await.expect("setup failed");
 
     create_admin_user(&db)
@@ -111,6 +118,9 @@ async fn main() -> Result<(), std::io::Error> {
         .nest("/docs/", scalar)
         .nest("/docs/api.json", spec_endpoint)
         .nest("/docs/api.yaml", spec_yaml_endpoint)
+        .with(LoggingMiddleware)  // Custom detailed logging middleware
+        // Alternative: use built-in Tracing middleware instead
+        // .with(Tracing)
         .data(db);
 
     info!("listening at: http://0.0.0.0:5000");
