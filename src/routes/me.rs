@@ -22,10 +22,16 @@ pub struct UpdateUsernameRequest {
 }
 
 #[derive(Object, Debug)]
+pub struct PermissionInfo {
+    pub action: String,
+    pub resource: String,
+}
+
+#[derive(Object, Debug)]
 pub struct MeInfo {
     pub id: uuid::Uuid,
     pub username: String,
-    pub permissions: Vec<String>,
+    pub permissions: Vec<PermissionInfo>,
 }
 
 #[derive(poem_openapi::Enum, Debug, Clone)]
@@ -101,8 +107,11 @@ impl MeApi {
             .map_err(poem::error::InternalServerError)?;
         let permissions = user_permissions
             .into_iter()
-            .filter_map(|(_, perm)| perm.and_then(|p| p.permission_name))
-            .collect::<Vec<String>>();
+            .filter_map(|(_, perm)| perm.map(|p| PermissionInfo {
+                action: p.action_id,
+                resource: p.resource_id,
+            }))
+            .collect::<Vec<PermissionInfo>>();
         let info = MeInfo {
             id: user.id,
             username: user.name,
