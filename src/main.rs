@@ -14,13 +14,10 @@ use sea_orm::*;
 use tracing::info;
 use uuid::Uuid;
 
-use crate::middleware::LoggingMiddleware;
-
 use crate::setup::SetupResult;
 
 mod auth;
 mod config;
-mod middleware;
 mod routes;
 mod setup;
 
@@ -118,8 +115,7 @@ async fn main() -> Result<(), std::io::Error> {
         .nest("/docs/", scalar)
         .nest("/docs/api.json", spec_endpoint)
         .nest("/docs/api.yaml", spec_yaml_endpoint)
-        .with(LoggingMiddleware)  // Custom detailed logging middleware
-        // Alternative: use built-in Tracing middleware instead
+         // Alternative: use built-in Tracing middleware instead
         // .with(Tracing)
         .data(db);
 
