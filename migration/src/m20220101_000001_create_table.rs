@@ -133,7 +133,8 @@ impl MigrationTrait for Migration {
             "post",
             "asset",
             "resource", 
-            "action"
+            "action",
+            "collection"
         ];
 
         for resource in resources {
