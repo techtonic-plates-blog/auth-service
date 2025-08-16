@@ -4,6 +4,8 @@ use sea_orm::{DatabaseConnection, QueryFilter, ColumnTrait};
 use entities::permissions::Entity as Permissions;
 use entities::permission_action::Entity as PermissionActions;
 use entities::permission_resource::Entity as PermissionResources;
+use entities::permission_scope::Entity as PermissionScopes;
+use entities::roles::Entity as RolesEntity;
 use crate::auth::BearerAuthorization;
 
 use super::ApiTags;
@@ -26,6 +28,7 @@ enum GetPermissionResponse {
 pub struct AddPermissionRequest {
     pub action_id: String,
     pub resource_id: String,
+    pub scope_id: String,
     pub permission_name: Option<String>,
 }
 
@@ -37,6 +40,11 @@ pub struct AddActionRequest {
 #[derive(poem_openapi::Object, Debug)]
 pub struct AddResourceRequest {
     pub resource: String,
+}
+
+#[derive(poem_openapi::Object, Debug)]
+pub struct AddScopeRequest {
+    pub scope: String,
 }
 
 #[derive(poem_openapi::Object, Debug)]
@@ -52,6 +60,11 @@ pub struct BatchActionsRequest {
 #[derive(poem_openapi::Object, Debug)]
 pub struct BatchResourcesRequest {
     pub resources: Vec<String>,
+}
+
+#[derive(poem_openapi::Object, Debug)]
+pub struct BatchScopesRequest {
+    pub scopes: Vec<String>,
 }
 
 #[derive(ApiResponse)]
@@ -77,6 +90,14 @@ enum GetResourceResponse {
 }
 
 #[derive(ApiResponse)]
+enum GetScopeResponse {
+    #[oai(status = 200)]
+    Ok(Json<entities::permission_scope::Model>),
+    #[oai(status = 404)]
+    NotFound
+}
+
+#[derive(ApiResponse)]
 enum BatchActionsResponse {
     #[oai(status = 200)]
     Ok(Json<Vec<entities::permission_action::Model>>),
@@ -86,6 +107,27 @@ enum BatchActionsResponse {
 enum BatchResourcesResponse {
     #[oai(status = 200)]
     Ok(Json<Vec<entities::permission_resource::Model>>),
+}
+
+#[derive(ApiResponse)]
+enum BatchScopesResponse {
+    #[oai(status = 200)]
+    Ok(Json<Vec<entities::permission_scope::Model>>),
+}
+
+#[derive(ApiResponse)]
+enum RolePermissionsResponse {
+    #[oai(status = 200)]
+    Ok(Json<Vec<entities::role_permissions::Model>>),
+    #[oai(status = 400)]
+    BadRequest(PlainText<String>),
+    #[oai(status = 404)]
+    NotFound,
+}
+
+#[derive(poem_openapi::Object, Debug)]
+pub struct RolePermissionsRequest {
+    pub permissions: Vec<uuid::Uuid>,
 }
 
 #[OpenApi(prefix_path = "/permissions", tag = "ApiTags::Permissions")]
@@ -128,13 +170,14 @@ impl PermissionsApi {
 
         // Generate permission_name if not provided
         let permission_name = req.0.permission_name.unwrap_or_else(|| {
-            format!("{}:{}", req.0.action_id, req.0.resource_id)
+            format!("{}:{}:{}", req.0.action_id, req.0.resource_id, req.0.scope_id)
         });
 
         let active = entities::permissions::ActiveModel {
             id: Set(uuid::Uuid::new_v4()),
             action_id: Set(req.0.action_id),
             resource_id: Set(req.0.resource_id),
+            scope_id: Set(req.0.scope_id),
             permission_name: Set(Some(permission_name)),
             ..Default::default()
         };
@@ -330,6 +373,164 @@ impl PermissionsApi {
             .await
             .map_err(poem::error::InternalServerError)?;
         Ok(BatchResourcesResponse::Ok(Json(resources)))
+    }
+
+    // Scopes CRUD operations
+    #[oai(path = "/scopes", method = "get")]
+    async fn get_scopes(&self, db: Data<&DatabaseConnection>) -> Result<Json<Vec<String>>> {
+        let scopes: Vec<String> = PermissionScopes::find()
+            .select_only()
+            .column(entities::permission_scope::Column::Scope)
+            .into_tuple()
+            .all(*db)
+            .await
+            .map_err(poem::error::InternalServerError)?;
+        Ok(Json(scopes))
+    }
+
+    #[oai(path = "/scopes/:scope", method = "get")]
+    async fn get_scope(&self, db: Data<&DatabaseConnection>, scope: poem_openapi::param::Path<String>) -> Result<GetScopeResponse> {
+        let scope_model = PermissionScopes::find_by_id(scope.0)
+            .one(*db)
+            .await
+            .map_err(poem::error::InternalServerError)?;
+        match scope_model {
+            Some(model) => Ok(GetScopeResponse::Ok(Json(model))),
+            None => Ok(GetScopeResponse::NotFound),
+        }
+    }
+
+    #[oai(path = "/scopes", method = "post")]
+    async fn add_scope(
+        &self,
+        db: Data<&DatabaseConnection>,
+        claims: BearerAuthorization,
+        req: Json<AddScopeRequest>,
+    ) -> Result<poem_openapi::payload::PlainText<String>> {
+        if !claims.has_permission("create", "permission") {
+            return Err(Error::from_string("Not enough permissions", StatusCode::FORBIDDEN))
+        }
+
+        let active = entities::permission_scope::ActiveModel {
+            scope: Set(req.0.scope.clone()),
+            ..Default::default()
+        };
+        let model = active.insert(*db).await.map_err(poem::error::InternalServerError)?;
+        Ok(PlainText(model.scope))
+    }
+
+    #[oai(path = "/scopes/:scope", method = "delete")]
+    async fn delete_scope(
+        &self,
+        db: Data<&DatabaseConnection>,
+        claims: BearerAuthorization,
+        scope: poem_openapi::param::Path<String>,
+    ) -> Result<poem_openapi::payload::PlainText<String>> {
+        if !claims.has_permission("delete", "permission") {
+            return Err(Error::from_string("Not enough permissions", StatusCode::FORBIDDEN))
+        }
+        let res = PermissionScopes::delete_by_id(scope.0.clone())
+            .exec(*db)
+            .await
+            .map_err(poem::error::InternalServerError)?;
+        if res.rows_affected == 0 {
+            return Err(Error::from_string("Scope not found", StatusCode::NOT_FOUND));
+        }
+        Ok(poem_openapi::payload::PlainText(scope.0))
+    }
+
+    #[oai(path = "/scopes/batch", method = "post")]
+    async fn batch_get_scopes(
+        &self,
+        db: Data<&DatabaseConnection>,
+        req: Json<BatchScopesRequest>,
+    ) -> Result<BatchScopesResponse> {
+        let scopes = PermissionScopes::find()
+            .filter(entities::permission_scope::Column::Scope.is_in(req.0.scopes.clone()))
+            .all(*db)
+            .await
+            .map_err(poem::error::InternalServerError)?;
+        Ok(BatchScopesResponse::Ok(Json(scopes)))
+    }
+
+    #[oai(path = "/roles/:role_id/permissions", method = "post")]
+    async fn add_permissions_to_role(
+        &self,
+        db: Data<&DatabaseConnection>,
+        claims: BearerAuthorization,
+        role_id: poem_openapi::param::Path<uuid::Uuid>,
+        req: Json<RolePermissionsRequest>,
+    ) -> Result<RolePermissionsResponse> {
+        if !claims.has_permission("update", "role") {
+            return Err(poem::Error::from_string("Not enough permissions", poem::http::StatusCode::FORBIDDEN))
+        }
+        // Check role exists
+        let role = RolesEntity::find_by_id(role_id.0).one(*db).await.map_err(poem::error::InternalServerError)?;
+        if role.is_none() {
+            return Ok(RolePermissionsResponse::NotFound);
+        }
+        // Validate permissions exist
+        let found_permissions: Vec<uuid::Uuid> = Permissions::find()
+            .filter(entities::permissions::Column::Id.is_in(req.0.permissions.clone()))
+            .all(*db)
+            .await
+            .map_err(poem::error::InternalServerError)?
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
+        let missing: Vec<uuid::Uuid> = req
+            .0
+            .permissions
+            .iter()
+            .filter(|id| !found_permissions.contains(id))
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            return Ok(RolePermissionsResponse::BadRequest(PlainText(format!("permissions do not exist: {:?}", missing))));
+        }
+
+        // Insert role_permissions
+        let mut inserted = Vec::new();
+        for perm_id in req.0.permissions {
+            let rp = entities::role_permissions::ActiveModel {
+                role_id: Set(role_id.0),
+                permission_id: Set(perm_id),
+                ..Default::default()
+            };
+            let model = rp.insert(*db).await.map_err(poem::error::InternalServerError)?;
+            inserted.push(model);
+        }
+
+        Ok(RolePermissionsResponse::Ok(Json(inserted)))
+    }
+
+    #[oai(path = "/roles/:role_id/permissions", method = "delete")]
+    async fn remove_permissions_from_role(
+        &self,
+        db: Data<&DatabaseConnection>,
+        claims: BearerAuthorization,
+        role_id: poem_openapi::param::Path<uuid::Uuid>,
+        req: Json<RolePermissionsRequest>,
+    ) -> Result<poem_openapi::payload::PlainText<String>> {
+        if !claims.has_permission("update", "role") {
+            return Err(poem::Error::from_string("Not enough permissions", poem::http::StatusCode::FORBIDDEN))
+        }
+        // Check role exists
+        let role = RolesEntity::find_by_id(role_id.0).one(*db).await.map_err(poem::error::InternalServerError)?;
+        if role.is_none() {
+            return Err(poem::Error::from_string("Role not found", poem::http::StatusCode::NOT_FOUND))
+        }
+
+        for perm_id in req.0.permissions {
+            entities::role_permissions::Entity::delete_many()
+                .filter(entities::role_permissions::Column::RoleId.eq(role_id.0))
+                .filter(entities::role_permissions::Column::PermissionId.eq(perm_id))
+                .exec(*db)
+                .await
+                .map_err(poem::error::InternalServerError)?;
+        }
+
+        Ok(poem_openapi::payload::PlainText("permissions removed from role".to_string()))
     }
 
 }

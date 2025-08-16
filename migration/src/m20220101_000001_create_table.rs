@@ -11,11 +11,14 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager.create_type(Type::create()
-            .as_enum(UserStatusEnum)
-            .values(UserStatusVariants::iter())
-            .to_owned()
-        ).await?;
+        manager
+            .create_type(
+                Type::create()
+                    .as_enum(UserStatusEnum)
+                    .values(UserStatusVariants::iter())
+                    .to_owned(),
+            )
+            .await?;
 
         // Create users table
         manager
@@ -37,21 +40,39 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        manager.create_table(
-            Table::create()
-                .table(PermissionAction::Table)
-                .if_not_exists()
-                .col(string(PermissionAction::Action).primary_key().not_null())
-                .to_owned(),
-        ).await?;
+        manager
+            .create_table(
+                Table::create()
+                    .table(PermissionAction::Table)
+                    .if_not_exists()
+                    .col(string(PermissionAction::Action).primary_key().not_null())
+                    .to_owned(),
+            )
+            .await?;
 
-        manager.create_table(
-            Table::create()
-                .table(PermissionResource::Table)
-                .if_not_exists()
-                .col(string(PermissionResource::Resource).primary_key().not_null())
-                .to_owned(),
-        ).await?;  
+        manager
+            .create_table(
+                Table::create()
+                    .table(PermissionResource::Table)
+                    .if_not_exists()
+                    .col(
+                        string(PermissionResource::Resource)
+                            .primary_key()
+                            .not_null(),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_table(
+                Table::create()
+                    .table(PermissionScope::Table)
+                    .if_not_exists()
+                    .col(string(PermissionScope::Scope).primary_key().not_null())
+                    .to_owned(),
+            )
+            .await?;
 
         // Create permissions table
         manager
@@ -63,6 +84,7 @@ impl MigrationTrait for Migration {
                     .col(string_null(Permissions::PermissionName))
                     .col(string(Permissions::ActionId).not_null())
                     .col(string(Permissions::ResourceId).not_null())
+                    .col(string(Permissions::ScopeId).not_null())
                     .foreign_key(
                         ForeignKey::create()
                             .from(Permissions::Table, Permissions::ActionId)
@@ -76,6 +98,13 @@ impl MigrationTrait for Migration {
                             .to(PermissionResource::Table, PermissionResource::Resource)
                             .on_delete(ForeignKeyAction::Cascade)
                             .on_update(ForeignKeyAction::Cascade),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .from(Permissions::Table, Permissions::ScopeId)
+                            .to(PermissionScope::Table, PermissionScope::Scope)
+                            .on_delete(ForeignKeyAction::Cascade)
+                            .on_update(ForeignKeyAction::Cascade)
                     )
                     .to_owned(),
             )
@@ -110,13 +139,78 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        let actions = vec![
-            "create",
-            "read",
-            "update",
-            "delete",
-            
-        ];
+        // Create roles table
+        manager
+            .create_table(
+                Table::create()
+                    .table(Roles::Table)
+                    .if_not_exists()
+                    .col(uuid(Roles::Id).primary_key().not_null())
+                    .col(string(Roles::Name).not_null().unique_key())
+                    .col(string_null(Roles::Description))
+                    .to_owned(),
+            )
+            .await?;
+
+        // Create role_permissions join table
+        manager
+            .create_table(
+                Table::create()
+                    .table(RolePermissions::Table)
+                    .if_not_exists()
+                    .col(uuid(RolePermissions::RoleId).not_null())
+                    .col(uuid(RolePermissions::PermissionId).not_null())
+                    .primary_key(
+                        Index::create()
+                            .col(RolePermissions::RoleId)
+                            .col(RolePermissions::PermissionId),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .from(RolePermissions::Table, RolePermissions::RoleId)
+                            .to(Roles::Table, Roles::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .from(RolePermissions::Table, RolePermissions::PermissionId)
+                            .to(Permissions::Table, Permissions::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        // Create user_role join table
+        manager
+            .create_table(
+                Table::create()
+                    .table(UserRole::Table)
+                    .if_not_exists()
+                    .col(uuid(UserRole::UserId).not_null())
+                    .col(uuid(UserRole::RoleId).not_null())
+                    .primary_key(
+                        Index::create().col(UserRole::UserId).col(UserRole::RoleId),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .from(UserRole::Table, UserRole::UserId)
+                            .to(Users::Table, Users::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .from(UserRole::Table, UserRole::RoleId)
+                            .to(Roles::Table, Roles::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        let actions = vec!["create", "read", "update", "delete"];
+        // collect generated permission ids so we can grant them to the admin role
+        let mut permission_ids: Vec<Uuid> = Vec::new();
 
         for action in actions.iter() {
             let insert = Query::insert()
@@ -127,14 +221,26 @@ impl MigrationTrait for Migration {
             manager.exec_stmt(insert).await?;
         }
 
+        let scopes = vec!["any", "owned"];
+
+        for scope in scopes.iter() {
+            let insert = Query::insert()
+                .into_table(PermissionScope::Table)
+                .columns([PermissionScope::Scope])
+                .values_panic([scope.to_owned().into()])
+                .to_owned();
+            manager.exec_stmt(insert).await?;
+        }
+
         let resources = vec![
             "permission",
             "user",
             "post",
             "asset",
-            "resource", 
+            "resource",
             "action",
-            "collection"
+            "collection",
+            "entry",
         ];
 
         for resource in resources {
@@ -145,34 +251,69 @@ impl MigrationTrait for Migration {
                 .to_owned();
             manager.exec_stmt(insert).await?;
 
-            for action in &actions {
-                let permission_name = format!("{}:{}", action, resource);
-                let insert = Query::insert()
-                    .into_table(Permissions::Table)
-                    .columns([
-                        Permissions::Id,
-                        Permissions::ActionId,
-                        Permissions::ResourceId,
-                        Permissions::PermissionName,
-                    ])
-                    .values_panic([
-                        Uuid::new_v4().into(),
-                        (*action).into(),
-                        (*resource).into(),
-                        permission_name.into(),
-                    ])
-                    .to_owned();
-                manager.exec_stmt(insert).await?;
+            for action in actions.iter() {
+                for scope in scopes.iter() {
+                    let permission_name = format!("{}:{}:{}", action, resource, scope);
+                    // generate and record the permission id so we can reference it later
+                    let perm_id = Uuid::new_v4();
+                    permission_ids.push(perm_id);
+
+                    let insert = Query::insert()
+                        .into_table(Permissions::Table)
+                        .columns([
+                            Permissions::Id,
+                            Permissions::ActionId,
+                            Permissions::ResourceId,
+                            Permissions::ScopeId,
+                            Permissions::PermissionName,
+                        ])
+                        .values_panic([
+                            perm_id.into(),
+                            (*action).into(),
+                            (*resource).into(),
+                            (*scope).into(),
+                            permission_name.into(),
+                        ])
+                        .to_owned();
+                    manager.exec_stmt(insert).await?;
+                }
             }
         }
 
-       
-       
+        // Create admin role
+        let admin_role_id = Uuid::new_v4();
+        let insert = Query::insert()
+            .into_table(Roles::Table)
+            .columns([Roles::Id, Roles::Name])
+            .values_panic([admin_role_id.into(), "admin".into()])
+            .to_owned();
+        manager.exec_stmt(insert).await?;
+
+        // Grant all permissions to admin role
+        for perm_id in &permission_ids {
+            let insert = Query::insert()
+                .into_table(RolePermissions::Table)
+                .columns([RolePermissions::RoleId, RolePermissions::PermissionId])
+                .values_panic([admin_role_id.into(), perm_id.to_owned().into()])
+                .to_owned();
+            manager.exec_stmt(insert).await?;
+        }
 
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        // Drop join tables and roles in order to avoid FK constraint errors
+        manager
+            .drop_table(Table::drop().table(UserRole::Table).to_owned())
+            .await?;
+        manager
+            .drop_table(Table::drop().table(RolePermissions::Table).to_owned())
+            .await?;
+        manager
+            .drop_table(Table::drop().table(Roles::Table).to_owned())
+            .await?;
+
         // Drop user_permissions join table first (to avoid FK constraint errors)
         manager
             .drop_table(Table::drop().table(UserPermissions::Table).to_owned())
@@ -217,6 +358,7 @@ enum Permissions {
     ActionId,
     ResourceId,
     PermissionName,
+    ScopeId
 }
 
 #[derive(DeriveIden)]
@@ -226,15 +368,42 @@ enum UserPermissions {
     PermissionId,
 }
 
-
 #[derive(DeriveIden)]
 enum PermissionAction {
     Table,
-    Action
-} 
+    Action,
+}
 
 #[derive(DeriveIden)]
 enum PermissionResource {
     Table,
-    Resource
+    Resource,
+}
+
+#[derive(DeriveIden)]
+enum PermissionScope {
+    Table,
+    Scope,
+}
+
+#[derive(DeriveIden)]
+enum Roles {
+    Table,
+    Id,
+    Name,
+    Description,
+}
+
+#[derive(DeriveIden)]
+enum RolePermissions {
+    Table,
+    RoleId,
+    PermissionId,
+}
+
+#[derive(DeriveIden)]
+enum UserRole {
+    Table,
+    UserId,
+    RoleId,
 }

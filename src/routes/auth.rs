@@ -6,12 +6,16 @@ use chrono::{Duration, Utc};
 use entities::permissions::Entity as Permissions;
 use entities::sea_orm_active_enums::UserStatusEnum;
 use entities::user_permissions::Entity as UserPermissions;
+use entities::user_role::Entity as UserRole;
+use entities::role_permissions::Entity as RolePermissions;
+use entities::roles::Entity as RolesEntity;
 use entities::users::Entity as User;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use poem::http::StatusCode;
 use poem::{Result, error::InternalServerError, web::Data};
 use poem_openapi::{ApiResponse, Object, OpenApi, payload::Json};
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use std::collections::HashSet;
 
 pub struct AuthApi;
 
@@ -104,13 +108,51 @@ impl AuthApi {
             .all(*db)
             .await
             .map_err(InternalServerError)?;
-        let permissions = permissions
+        let mut permissions = permissions
             .into_iter()
             .filter_map(|x| x.1)
             .filter_map(|x| {
                 x.permission_name.and_then(|name| Permission::from_string(&name))
             })
             .collect::<Vec<Permission>>();
+
+        // Also collect permissions granted via roles
+        let user_roles = UserRole::find()
+            .filter(entities::user_role::Column::UserId.eq(users.id.clone()))
+            .find_also_related(RolesEntity)
+            .all(*db)
+            .await
+            .map_err(InternalServerError)?;
+        let role_ids: Vec<uuid::Uuid> = user_roles
+            .into_iter()
+            .filter_map(|(_, role)| role.map(|r| r.id))
+            .collect();
+
+        if !role_ids.is_empty() {
+            let role_perms = RolePermissions::find()
+                .filter(entities::role_permissions::Column::RoleId.is_in(role_ids.clone()))
+                .find_also_related(Permissions)
+                .all(*db)
+                .await
+                .map_err(InternalServerError)?;
+
+            let role_permissions_parsed = role_perms
+                .into_iter()
+                .filter_map(|x| x.1)
+                .filter_map(|p| p.permission_name.and_then(|name| Permission::from_string(&name)))
+                .collect::<Vec<Permission>>();
+
+            // Merge and deduplicate permissions by string form
+            let mut seen = HashSet::new();
+            let mut merged = Vec::new();
+            for perm in permissions.iter().chain(role_permissions_parsed.iter()) {
+                let key = perm.to_string();
+                if seen.insert(key.clone()) {
+                    merged.push(perm.clone());
+                }
+            }
+            permissions = merged;
+        }
 
         let jwt_exp = Utc::now() + Duration::minutes(15);
         let refresher_exp = Utc::now() + Duration::days(30);
@@ -190,20 +232,58 @@ impl AuthApi {
             return Ok(RefreshResponse::Unauthorized);
         }
 
-        // Get permissions
+        // Get permissions from direct assignments
         let permissions = UserPermissions::find()
             .filter(entities::user_permissions::Column::UserId.eq(users.id.clone()))
             .find_also_related(Permissions)
             .all(*db)
             .await
             .map_err(InternalServerError)?;
-        let permissions = permissions
+        let mut permissions = permissions
             .into_iter()
             .filter_map(|x| x.1)
             .filter_map(|x| {
                 x.permission_name.and_then(|name| Permission::from_string(&name))
             })
             .collect::<Vec<Permission>>();
+
+        // Also collect permissions granted via roles
+        let user_roles = UserRole::find()
+            .filter(entities::user_role::Column::UserId.eq(users.id.clone()))
+            .find_also_related(RolesEntity)
+            .all(*db)
+            .await
+            .map_err(InternalServerError)?;
+        let role_ids: Vec<uuid::Uuid> = user_roles
+            .into_iter()
+            .filter_map(|(_, role)| role.map(|r| r.id))
+            .collect();
+
+        if !role_ids.is_empty() {
+            let role_perms = RolePermissions::find()
+                .filter(entities::role_permissions::Column::RoleId.is_in(role_ids.clone()))
+                .find_also_related(Permissions)
+                .all(*db)
+                .await
+                .map_err(InternalServerError)?;
+
+            let role_permissions_parsed = role_perms
+                .into_iter()
+                .filter_map(|x| x.1)
+                .filter_map(|p| p.permission_name.and_then(|name| Permission::from_string(&name)))
+                .collect::<Vec<Permission>>();
+
+            // Merge and deduplicate permissions by string form
+            let mut seen = HashSet::new();
+            let mut merged = Vec::new();
+            for perm in permissions.iter().chain(role_permissions_parsed.iter()) {
+                let key = perm.to_string();
+                if seen.insert(key.clone()) {
+                    merged.push(perm.clone());
+                }
+            }
+            permissions = merged;
+        }
 
         let jwt_exp = Utc::now() + Duration::minutes(15);
         let refresher_exp = Utc::now() + Duration::days(30);

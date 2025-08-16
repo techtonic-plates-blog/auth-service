@@ -4,6 +4,7 @@ mod auth;
 mod permissions;
 mod users;
 mod me;
+mod roles;
 
 #[derive(Debug, Tags)]
 #[allow(dead_code)]
@@ -12,6 +13,7 @@ pub enum ApiTags {
     Permissions,
     Users,
     Me,
+    Roles,
 }
 
 pub struct RootApi;
@@ -25,5 +27,5 @@ impl RootApi {
 }
 
 pub fn api() -> impl OpenApi {
-    (RootApi, auth::AuthApi, permissions::PermissionsApi, users::UsersApi, me::MeApi)
+    (RootApi, auth::AuthApi, permissions::PermissionsApi, users::UsersApi, me::MeApi, roles::RolesApi)
 }

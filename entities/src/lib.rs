@@ -4,7 +4,11 @@ pub mod prelude;
 
 pub mod permission_action;
 pub mod permission_resource;
+pub mod permission_scope;
 pub mod permissions;
+pub mod role_permissions;
+pub mod roles;
 pub mod sea_orm_active_enums;
 pub mod user_permissions;
+pub mod user_role;
 pub mod users;

@@ -7,6 +7,8 @@ use poem_openapi::param::Query;
 use poem_openapi::payload::PlainText;
 use poem_openapi::{ApiResponse, Object, OpenApi, payload::Json};
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use entities::user_role::Entity as UserRole;
+use entities::roles::Entity as RolesEntity;
 
 pub struct UsersApi;
 
@@ -15,6 +17,7 @@ pub struct UserDetails {
     pub id: uuid::Uuid,
     pub name: String,
     pub permissions: Vec<uuid::Uuid>,
+    pub roles: Vec<uuid::Uuid>,
     pub status: UserStatusEnum,
 }
 
@@ -32,6 +35,7 @@ pub struct RegisterRequest {
     #[oai(validator(min_length = 8))]
     pub password: String,
     pub permissions: Vec<uuid::Uuid>,
+    pub roles: Option<Vec<uuid::Uuid>>,
 }
 
 #[derive(Object, Debug)]
@@ -42,6 +46,7 @@ pub struct ComprehensiveUpdateUserRequest {
     #[oai(validator(min_length = 8))]
     pub password: Option<String>,
     pub permissions: Option<Vec<uuid::Uuid>>,
+    pub roles: Option<Vec<uuid::Uuid>>,
     pub status: Option<UserStatusEnum>,
 }
 
@@ -113,6 +118,15 @@ enum ComprehensiveUpdateUserResponse {
     #[oai(status = 400)]
     PermissionsDoNotExist(PlainText<String>),
 }
+#[derive(Object, Debug)]
+pub struct AddrolesRequest {
+    pub roles: Vec<uuid::Uuid>,
+}
+
+#[derive(Object, Debug)]
+pub struct RemoverolesRequest {
+    pub roles: Vec<uuid::Uuid>,
+}
 
 #[OpenApi(prefix_path = "/users", tag = "ApiTags::Users")]
 impl UsersApi {
@@ -142,10 +156,23 @@ impl UsersApi {
             Some(user) => {
                 let (user, permissions) = user;
 
+                // fetch roles for this user
+                let user_roles = UserRole::find()
+                    .filter(entities::user_role::Column::UserId.eq(user.id.clone()))
+                    .find_also_related(RolesEntity)
+                    .all(*db)
+                    .await
+                    .map_err(poem::error::InternalServerError)?;
+                let roles: Vec<uuid::Uuid> = user_roles
+                    .into_iter()
+                    .filter_map(|(_ur, role)| role.map(|r| r.id))
+                    .collect();
+
                 let user_with_permissions = UserDetails {
                     id: user.id.clone(),
                     name: user.name.clone(),
                     permissions: permissions.clone().into_iter().map(|p| p.id).collect(),
+                    roles,
                     status: user.status,
                 };
 
@@ -225,6 +252,20 @@ impl UsersApi {
                 .exec(*db)
                 .await
                 .map_err(poem::error::InternalServerError)?;
+        }
+        // Assign roles if provided
+        if let Some(roles) = &request.roles {
+            for role_id in roles {
+                let user_role = entities::user_role::ActiveModel {
+                    user_id: Set(users.last_insert_id),
+                    role_id: Set(*role_id),
+                    ..Default::default()
+                };
+                entities::user_role::Entity::insert(user_role)
+                    .exec(*db)
+                    .await
+                    .map_err(poem::error::InternalServerError)?;
+            }
         }
         Ok(RegisterResponse::Created(PlainText(format!(
             "/users/{}",
@@ -402,6 +443,54 @@ impl UsersApi {
                     ..Default::default()
                 };
                 entities::user_permissions::Entity::insert(user_perm)
+                    .exec(*db)
+                    .await
+                    .map_err(poem::error::InternalServerError)?;
+            }
+        }
+
+        // Update roles if provided
+        if let Some(new_roles) = &req.0.roles {
+            // Check if all roles exist
+            let found_roles: Vec<uuid::Uuid> = entities::roles::Entity::find()
+                .filter(entities::roles::Column::Id.is_in(new_roles.clone()))
+                .all(*db)
+                .await
+                .map_err(poem::error::InternalServerError)?
+                .into_iter()
+                .map(|role| role.id)
+                .collect();
+
+            let missing_roles: Vec<uuid::Uuid> = new_roles
+                .iter()
+                .filter(|id| !found_roles.contains(id))
+                .cloned()
+                .collect();
+
+            if !missing_roles.is_empty() {
+                return Ok(ComprehensiveUpdateUserResponse::PermissionsDoNotExist(
+                    PlainText(format!(
+                        "Roles do not exist: {:?}",
+                        missing_roles
+                    )),
+                ));
+            }
+
+            // Remove all existing roles for this user
+            entities::user_role::Entity::delete_many()
+                .filter(entities::user_role::Column::UserId.eq(user.id))
+                .exec(*db)
+                .await
+                .map_err(poem::error::InternalServerError)?;
+
+            // Add new roles
+            for role_id in new_roles {
+                let user_role = entities::user_role::ActiveModel {
+                    user_id: Set(user.id),
+                    role_id: Set(*role_id),
+                    ..Default::default()
+                };
+                entities::user_role::Entity::insert(user_role)
                     .exec(*db)
                     .await
                     .map_err(poem::error::InternalServerError)?;
@@ -605,16 +694,154 @@ impl UsersApi {
             .await
             .map_err(poem::error::InternalServerError)?;
 
+        // collect user ids to fetch roles in bulk
+        let user_ids: Vec<uuid::Uuid> = users_with_permissions.iter().map(|(u, _)| u.id).collect();
+        let user_roles = if !user_ids.is_empty() {
+            UserRole::find()
+                .filter(entities::user_role::Column::UserId.is_in(user_ids.clone()))
+                .find_also_related(RolesEntity)
+                .all(*db)
+                .await
+                .map_err(poem::error::InternalServerError)?
+        } else {
+            Vec::new()
+        };
+
+        // build map user_id -> Vec<role_id>
+        let mut roles_map: std::collections::HashMap<uuid::Uuid, Vec<uuid::Uuid>> = std::collections::HashMap::new();
+        for (_ur, role) in user_roles {
+            if let Some(r) = role {
+                roles_map.entry(_ur.user_id).or_default().push(r.id);
+            }
+        }
+
         let result: Vec<UserDetails> = users_with_permissions
             .into_iter()
             .map(|(user, permissions)| UserDetails {
                 id: user.id,
                 name: user.name,
                 permissions: permissions.into_iter().map(|p| p.id).collect(),
+                roles: roles_map.remove(&user.id).unwrap_or_default(),
                 status: user.status,
             })
             .collect();
 
         Ok(BatchUsersResponse::Ok(Json(result)))
+    }
+
+    #[oai(path = "/:username/roles", method = "post")]
+    async fn add_roles_to_user(
+        &self,
+        db: Data<&DatabaseConnection>,
+        claims: BearerAuthorization,
+        username: poem_openapi::param::Path<String>,
+        req: Json<AddrolesRequest>,
+    ) -> Result<PlainText<String>> {
+        if !claims.has_permission("update", "user") {
+            return Err(Error::from_string(
+                "Not enough permissions",
+                StatusCode::FORBIDDEN,
+            ));
+        }
+        // Check if user exists
+        let user = entities::users::Entity::find()
+            .filter(entities::users::Column::Name.eq(&username.0))
+            .one(*db)
+            .await
+            .map_err(poem::error::InternalServerError)?;
+        let Some(user) = user else {
+            return Err(Error::from_string("User not found", StatusCode::NOT_FOUND));
+        };
+        // Check if all roles exist
+        let found_roles: Vec<uuid::Uuid> = entities::roles::Entity::find()
+            .filter(entities::roles::Column::Id.is_in(req.0.roles.clone()))
+            .all(*db)
+            .await
+            .map_err(poem::error::InternalServerError)?
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        let missing_roles: Vec<uuid::Uuid> = req
+            .0
+            .roles
+            .iter()
+            .filter(|id| !found_roles.contains(id))
+            .cloned()
+            .collect();
+        if !missing_roles.is_empty() {
+            return Err(Error::from_string(
+                format!("roles do not exist: {:?}", missing_roles),
+                StatusCode::BAD_REQUEST,
+            ));
+        }
+        // Update last edit time for the user
+        let user_id = user.id;
+        let mut user_model: entities::users::ActiveModel = user.into();
+        user_model.last_edit_time = Set(chrono::Utc::now().naive_utc());
+        user_model
+            .update(*db)
+            .await
+            .map_err(poem::error::InternalServerError)?;
+
+        // Assign roles
+        for role_id in &req.0.roles {
+            let user_role = entities::user_role::ActiveModel {
+                user_id: Set(user_id),
+                role_id: Set(*role_id),
+                ..Default::default()
+            };
+            entities::user_role::Entity::insert(user_role)
+                .exec(*db)
+                .await
+                .map_err(poem::error::InternalServerError)?;
+        }
+        Ok(PlainText("roles assigned".to_string()))
+    }
+
+    #[oai(path = "/:username/roles", method = "delete")]
+    async fn remove_roles_from_user(
+        &self,
+        db: Data<&DatabaseConnection>,
+        claims: BearerAuthorization,
+        username: poem_openapi::param::Path<String>,
+        req: Json<RemoverolesRequest>,
+    ) -> Result<PlainText<String>> {
+        if !claims.has_permission("update", "user") {
+            return Err(Error::from_string(
+                "Not enough permissions",
+                StatusCode::FORBIDDEN,
+            ));
+        }
+        // Check if user exists
+        let user = entities::users::Entity::find()
+            .filter(entities::users::Column::Name.eq(&username.0))
+            .one(*db)
+            .await
+            .map_err(poem::error::InternalServerError)?;
+        let Some(user) = user else {
+            return Err(Error::from_string("User not found", StatusCode::NOT_FOUND));
+        };
+        // Update last edit time for the user
+        let user_id = user.id;
+        let mut user_model: entities::users::ActiveModel = user.into();
+        user_model.last_edit_time = Set(chrono::Utc::now().naive_utc());
+        user_model
+            .update(*db)
+            .await
+            .map_err(poem::error::InternalServerError)?;
+
+        // Remove roles
+        for role_id in &req.0.roles {
+            let res = entities::user_role::Entity::delete_many()
+                .filter(entities::user_role::Column::UserId.eq(user_id))
+                .filter(entities::user_role::Column::RoleId.eq(*role_id))
+                .exec(*db)
+                .await
+                .map_err(poem::error::InternalServerError)?;
+            if res.rows_affected == 0 {
+                // Optionally, you can return an error if a role was not found for this user
+            }
+        }
+        Ok(PlainText("roles removed".to_string()))
     }
 }

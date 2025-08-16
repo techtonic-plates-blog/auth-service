@@ -2,6 +2,10 @@
 
 pub use super::permission_action::Entity as PermissionAction;
 pub use super::permission_resource::Entity as PermissionResource;
+pub use super::permission_scope::Entity as PermissionScope;
 pub use super::permissions::Entity as Permissions;
+pub use super::role_permissions::Entity as RolePermissions;
+pub use super::roles::Entity as Roles;
 pub use super::user_permissions::Entity as UserPermissions;
+pub use super::user_role::Entity as UserRole;
 pub use super::users::Entity as Users;

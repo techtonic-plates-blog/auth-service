@@ -14,6 +14,7 @@ pub struct Model {
     pub permission_name: Option<String>,
     pub action_id: String,
     pub resource_id: String,
+    pub scope_id: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -34,6 +35,16 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     PermissionResource,
+    #[sea_orm(
+        belongs_to = "super::permission_scope::Entity",
+        from = "Column::ScopeId",
+        to = "super::permission_scope::Column::Scope",
+        on_update = "Cascade",
+        on_delete = "Cascade"
+    )]
+    PermissionScope,
+    #[sea_orm(has_many = "super::role_permissions::Entity")]
+    RolePermissions,
     #[sea_orm(has_many = "super::user_permissions::Entity")]
     UserPermissions,
 }
@@ -50,9 +61,30 @@ impl Related<super::permission_resource::Entity> for Entity {
     }
 }
 
+impl Related<super::permission_scope::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::PermissionScope.def()
+    }
+}
+
+impl Related<super::role_permissions::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::RolePermissions.def()
+    }
+}
+
 impl Related<super::user_permissions::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::UserPermissions.def()
+    }
+}
+
+impl Related<super::roles::Entity> for Entity {
+    fn to() -> RelationDef {
+        super::role_permissions::Relation::Roles.def()
+    }
+    fn via() -> Option<RelationDef> {
+        Some(super::role_permissions::Relation::Permissions.def().rev())
     }
 }
 
@@ -73,8 +105,14 @@ pub enum RelatedEntity {
     PermissionAction,
     #[sea_orm(entity = "super::permission_resource::Entity")]
     PermissionResource,
+    #[sea_orm(entity = "super::permission_scope::Entity")]
+    PermissionScope,
+    #[sea_orm(entity = "super::role_permissions::Entity")]
+    RolePermissions,
     #[sea_orm(entity = "super::user_permissions::Entity")]
     UserPermissions,
+    #[sea_orm(entity = "super::roles::Entity")]
+    Roles,
     #[sea_orm(entity = "super::users::Entity")]
     Users,
 }

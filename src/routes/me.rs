@@ -5,6 +5,8 @@ use poem::{Result, http::StatusCode, web::Data};
 use poem_openapi::payload::PlainText;
 use poem_openapi::{ApiResponse, Object, OpenApi, payload::Json};
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use entities::user_role::Entity as UserRole;
+use entities::roles::Entity as RolesEntity;
 
 pub struct MeApi;
 
@@ -25,6 +27,7 @@ pub struct UpdateUsernameRequest {
 pub struct PermissionInfo {
     pub action: String,
     pub resource: String,
+    pub scope: String,
 }
 
 #[derive(Object, Debug)]
@@ -32,6 +35,7 @@ pub struct MeInfo {
     pub id: uuid::Uuid,
     pub username: String,
     pub permissions: Vec<PermissionInfo>,
+    pub roles: Vec<String>,
 }
 
 #[derive(poem_openapi::Enum, Debug, Clone)]
@@ -110,12 +114,27 @@ impl MeApi {
             .filter_map(|(_, perm)| perm.map(|p| PermissionInfo {
                 action: p.action_id,
                 resource: p.resource_id,
+                scope: p.scope_id,
             }))
             .collect::<Vec<PermissionInfo>>();
+
+        // Fetch roles for the user
+        let user_roles = UserRole::find()
+            .filter(entities::user_role::Column::UserId.eq(user.id))
+            .find_also_related(RolesEntity)
+            .all(*db)
+            .await
+            .map_err(poem::error::InternalServerError)?;
+        let roles = user_roles
+            .into_iter()
+            .filter_map(|(_, role)| role.map(|r| r.name))
+            .collect::<Vec<String>>();
+
         let info = MeInfo {
             id: user.id,
             username: user.name,
             permissions,
+            roles,
         };
         Ok(MeGetResponse::Ok(Json(info)))
     }
