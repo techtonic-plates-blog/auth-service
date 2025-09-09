@@ -94,7 +94,7 @@ async fn main() -> Result<(), std::io::Error> {
         .with_max_level(tracing::Level::INFO)
         .init();
     
-    let SetupResult { db } = setup::setup_all().await.expect("setup failed");
+    let SetupResult { db, redis } = setup::setup_all().await.expect("setup failed");
 
     create_admin_user(&db)
         .await
@@ -117,7 +117,8 @@ async fn main() -> Result<(), std::io::Error> {
         .nest("/docs/api.yaml", spec_yaml_endpoint)
          // Alternative: use built-in Tracing middleware instead
         // .with(Tracing)
-        .data(db);
+        .data(db)
+        .data(redis);
 
     info!("listening at: http://0.0.0.0:5000");
     poem::Server::new(TcpListener::bind("0.0.0.0:5000"))

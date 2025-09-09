@@ -1,7 +1,7 @@
 FROM docker.io/rust:latest
 
 RUN cargo install cargo-watch
-RUN cargo install sea-orm-cli@1.1.0
+RUN cargo install sea-orm-cli
 RUN rustup component add rustfmt
 
 RUN apt update -y

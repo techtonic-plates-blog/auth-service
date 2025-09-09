@@ -1,4 +1,4 @@
-use crate::auth::{Claims, Permission};
+use crate::auth::{Permission, MinimalClaims, SessionData};
 use crate::config::CONFIG;
 use crate::routes::ApiTags;
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
@@ -16,8 +16,84 @@ use poem::{Result, error::InternalServerError, web::Data};
 use poem_openapi::{ApiResponse, Object, OpenApi, payload::Json};
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 use std::collections::HashSet;
+use redis::Client as RedisClient;
 
 pub struct AuthApi;
+
+// Helper function to create tokens with Redis session storage
+async fn create_tokens_with_session(
+    redis: &RedisClient,
+    user_id: uuid::Uuid,
+    permissions: Vec<Permission>,
+) -> Result<Tokens> {
+    let mut conn = redis.get_connection().map_err(InternalServerError)?;
+    
+    // Create session ID
+    let session_id = uuid::Uuid::new_v4().to_string();
+    
+    // Create session data
+    let session_data = SessionData {
+        user_id: user_id.to_string(),
+        company: "techtonic-plate".to_string(),
+        permissions,
+        created_at: Utc::now().timestamp(),
+        last_accessed: Utc::now().timestamp(),
+    };
+    
+    // Store session in Redis with 30-day expiration
+    let session_key = format!("session:{}", session_id);
+    let session_json = serde_json::to_string(&session_data).map_err(InternalServerError)?;
+    let _: () = redis::cmd("SET")
+        .arg(&session_key)
+        .arg(&session_json)
+        .arg("EX")
+        .arg(30 * 24 * 60 * 60) // 30 days
+        .query(&mut conn)
+        .map_err(InternalServerError)?;
+    
+    // Create JWT and refresher tokens with minimal claims
+    let jwt_exp = Utc::now() + Duration::minutes(15);
+    let refresher_exp = Utc::now() + Duration::days(30);
+    
+    let jwt_claims = MinimalClaims {
+        sub: user_id.to_string(),
+        session_id: session_id.clone(),
+        exp: jwt_exp.timestamp() as usize,
+    };
+    
+    let refresher_claims = MinimalClaims {
+        sub: user_id.to_string(),
+        session_id,
+        exp: refresher_exp.timestamp() as usize,
+    };
+    
+    let jwt = encode(
+        &Header::new(Algorithm::RS256),
+        &jwt_claims,
+        &EncodingKey::from_rsa_pem(CONFIG.jwt_secret_key.as_bytes())
+            .map_err(InternalServerError)?,
+    )
+    .map_err(InternalServerError)?;
+    
+    let refresher = encode(
+        &Header::new(Algorithm::RS256),
+        &refresher_claims,
+        &EncodingKey::from_rsa_pem(CONFIG.jwt_secret_key.as_bytes())
+            .map_err(InternalServerError)?,
+    )
+    .map_err(InternalServerError)?;
+    
+    Ok(Tokens {
+        jwt: Token {
+            token: jwt,
+            exp: jwt_claims.exp,
+        },
+        refresher: Token {
+            token: refresher,
+            exp: refresher_claims.exp,
+        },
+    })
+}
 
 #[derive(Object)]
 struct LoginRequest {
@@ -64,15 +140,36 @@ struct RegisterRequest {
     permissions: Vec<uuid::Uuid>,
 }
 
+#[derive(Object)]
+struct ValidateTokenRequest {
+    token: String,
+}
+
+#[derive(Object)]
+struct TokenValidationResult {
+    user_id: String,
+    company: String,
+    permissions: Vec<String>,
+    expires_at: usize,
+}
+
+#[derive(ApiResponse)]
+enum ValidateTokenResponse {
+    #[oai(status = 200)]
+    Valid(Json<TokenValidationResult>),
+    #[oai(status = 401)]
+    Invalid,
+}
+
 #[OpenApi(prefix_path = "/auth", tag = "ApiTags::Auth")]
 impl AuthApi {
     #[oai(method = "post", path = "/login")]
     async fn login(
         &self,
         db: Data<&DatabaseConnection>,
+        redis: Data<&RedisClient>,
         request: Json<LoginRequest>,
     ) -> Result<LoginResponse> {
-        //let salt = SaltString::generate(&mut OsRng);
         let argon2 = Argon2::default();
 
         let users = User::find()
@@ -154,53 +251,14 @@ impl AuthApi {
             permissions = merged;
         }
 
-        let jwt_exp = Utc::now() + Duration::minutes(15);
-        let refresher_exp = Utc::now() + Duration::days(30);
-
-        let jwt_claims = Claims {
-            sub: users.id.to_string(),
-            company: "techtonic-plate".to_string(),
-            exp: jwt_exp.timestamp() as usize,
-            permissions: permissions.clone(),
-        };
-
-        let refresher_claims = Claims {
-            sub: users.id.to_string(),
-            company: "techtonic-plate".to_string(),
-            exp: refresher_exp.timestamp() as usize,
-            permissions: permissions,
-        };
-
-        let jwt = encode(
-            &Header::new(Algorithm::RS256),
-            &jwt_claims,
-            &EncodingKey::from_rsa_pem(CONFIG.jwt_secret_key.as_bytes())
-                .map_err(InternalServerError)?,
-        )
-        .map_err(InternalServerError)?;
-        let refresher = encode(
-            &Header::new(Algorithm::RS256),
-            &refresher_claims,
-            &EncodingKey::from_rsa_pem(CONFIG.jwt_secret_key.as_bytes())
-                .map_err(InternalServerError)?,
-        )
-        .map_err(InternalServerError)?;
-
-        Ok(LoginResponse::Ok(Json(Tokens {
-            jwt: Token {
-                token: jwt,
-                exp: jwt_claims.exp,
-            },
-            refresher: Token {
-                token: refresher,
-                exp: refresher_claims.exp,
-            },
-        })))
+        let tokens = create_tokens_with_session(*redis, users.id, permissions).await?;
+        Ok(LoginResponse::Ok(Json(tokens)))
     }
     #[oai(method = "post", path = "/refresh")]
     async fn refresh(
         &self,
         db: Data<&DatabaseConnection>,
+        redis: Data<&RedisClient>,
         request: Json<RefreshRequest>,
     ) -> Result<RefreshResponse> {
         // Decode the refresher token
@@ -209,17 +267,35 @@ impl AuthApi {
                 .map_err(InternalServerError)?;
         let validation = jsonwebtoken::Validation::new(Algorithm::RS256);
         let token_data =
-            match jsonwebtoken::decode::<Claims>(&request.refresher, decoding_key, &validation) {
+            match jsonwebtoken::decode::<MinimalClaims>(&request.refresher, decoding_key, &validation) {
                 Ok(data) => data,
                 Err(_) => return Ok(RefreshResponse::Unauthorized),
             };
         let claims = token_data.claims;
 
-        // Parse users id as Uuid
+        // Get session from Redis
+        let mut conn = (*redis).get_connection().map_err(InternalServerError)?;
+        let session_key = format!("session:{}", claims.session_id);
+        let _session_json: String = match redis::cmd("GET")
+            .arg(&session_key)
+            .query(&mut conn) {
+            Ok(json) => json,
+            Err(_) => return Ok(RefreshResponse::Unauthorized),
+        };
+        
+        // Verify session exists (we don't need to parse it, just check it exists)
+        match serde_json::from_str::<SessionData>(&_session_json) {
+            Ok(_) => {},
+            Err(_) => return Ok(RefreshResponse::Unauthorized),
+        };
+
+        // Parse user ID as Uuid
         let user_id = match uuid::Uuid::parse_str(&claims.sub) {
             Ok(uuid) => uuid,
             Err(_) => return Ok(RefreshResponse::Unauthorized),
         };
+        
+        // Verify user still exists and is active
         let users = User::find_by_id(user_id)
             .one(*db)
             .await
@@ -232,7 +308,7 @@ impl AuthApi {
             return Ok(RefreshResponse::Unauthorized);
         }
 
-        // Get permissions from direct assignments
+        // Get fresh permissions from database (in case they changed)
         let permissions = UserPermissions::find()
             .filter(entities::user_permissions::Column::UserId.eq(users.id.clone()))
             .find_also_related(Permissions)
@@ -285,46 +361,61 @@ impl AuthApi {
             permissions = merged;
         }
 
-        let jwt_exp = Utc::now() + Duration::minutes(15);
-        let refresher_exp = Utc::now() + Duration::days(30);
+        let tokens = create_tokens_with_session(*redis, users.id, permissions).await?;
+        Ok(RefreshResponse::Ok(Json(tokens)))
+    }
 
-        let jwt_claims = Claims {
-            sub: users.id.to_string(),
-            company: "techtonic-plate".to_string(),
-            exp: jwt_exp.timestamp() as usize,
-            permissions: permissions.clone(),
+    /// Validate a JWT token and return session information for other services
+    #[oai(method = "post", path = "/validate")]
+    async fn validate_token(
+        &self,
+        redis: Data<&RedisClient>,
+        request: Json<ValidateTokenRequest>,
+    ) -> Result<ValidateTokenResponse> {
+        // Decode the token
+        let decoding_key =
+            &jsonwebtoken::DecodingKey::from_rsa_pem(CONFIG.jwt_public_key.as_bytes())
+                .map_err(InternalServerError)?;
+        let validation = jsonwebtoken::Validation::new(Algorithm::RS256);
+        let token_data =
+            match jsonwebtoken::decode::<MinimalClaims>(&request.token, decoding_key, &validation) {
+                Ok(data) => data,
+                Err(_) => return Ok(ValidateTokenResponse::Invalid),
+            };
+        let claims = token_data.claims;
+
+        // Get session from Redis
+        let mut conn = (*redis).get_connection().map_err(InternalServerError)?;
+        let session_key = format!("session:{}", claims.session_id);
+        let session_json: String = match redis::cmd("GET")
+            .arg(&session_key)
+            .query(&mut conn) {
+            Ok(json) => json,
+            Err(_) => return Ok(ValidateTokenResponse::Invalid),
         };
-        let refresher_claims = Claims {
-            sub: users.id.to_string(),
-            company: "techtonic-plate".to_string(),
-            exp: refresher_exp.timestamp() as usize,
-            permissions,
+        
+        let session_data: SessionData = match serde_json::from_str(&session_json) {
+            Ok(data) => data,
+            Err(_) => return Ok(ValidateTokenResponse::Invalid),
         };
 
-        let jwt = encode(
-            &Header::new(Algorithm::RS256),
-            &jwt_claims,
-            &EncodingKey::from_rsa_pem(CONFIG.jwt_secret_key.as_bytes())
-                .map_err(InternalServerError)?,
-        )
-        .map_err(InternalServerError)?;
-        let refresher = encode(
-            &Header::new(Algorithm::RS256),
-            &refresher_claims,
-            &EncodingKey::from_rsa_pem(CONFIG.jwt_secret_key.as_bytes())
-                .map_err(InternalServerError)?,
-        )
-        .map_err(InternalServerError)?;
+        // Update last accessed time
+        let mut updated_session = session_data.clone();
+        updated_session.last_accessed = Utc::now().timestamp();
+        let updated_json = serde_json::to_string(&updated_session).map_err(InternalServerError)?;
+        let _: () = redis::cmd("SET")
+            .arg(&session_key)
+            .arg(&updated_json)
+            .arg("EX")
+            .arg(30 * 24 * 60 * 60) // 30 days expiration
+            .query(&mut conn)
+            .map_err(InternalServerError)?;
 
-        Ok(RefreshResponse::Ok(Json(Tokens {
-            jwt: Token {
-                token: jwt,
-                exp: jwt_claims.exp,
-            },
-            refresher: Token {
-                token: refresher,
-                exp: refresher_claims.exp,
-            },
+        Ok(ValidateTokenResponse::Valid(Json(TokenValidationResult {
+            user_id: session_data.user_id,
+            company: session_data.company,
+            permissions: session_data.permissions.into_iter().map(|p| p.to_string()).collect(),
+            expires_at: claims.exp,
         })))
     }
 }

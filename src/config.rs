@@ -5,10 +5,12 @@ pub struct AppConfig {
     pub database_url: String,
     pub jwt_secret_key: String,
     pub jwt_public_key: String,
+    pub redis_url: String,
 }
 
 pub static CONFIG: Lazy<AppConfig> = Lazy::new(|| AppConfig {
     database_url: env::var("DATABASE_URL").expect("Could not get database url"),
     jwt_secret_key: env::var("JWT_SECRET_KEY").expect("JWT secret key not set").replace("\\n", "\n"),
     jwt_public_key: env::var("JWT_PUBLIC_KEY").expect("JWT public key not set").replace("\\n", "\n"),
+    redis_url: env::var("REDIS_URL").expect("Redis URL not set"),
 });
